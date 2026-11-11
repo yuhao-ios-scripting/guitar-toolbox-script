@@ -348,3 +348,34 @@
 ---
 
 # → 提問 / A-017
+
++ godev 依據functional programming與domain-driven development的原則檢視原始碼
+
+# → 回覆 / A-017
+
+* _2026-11-12 +0800_
+
+1. `godev 依據functional programming與domain-driven development的原則檢視原始碼`
+
+   唯讀檢視 `GuitarToolbox/index.tsx`（3,308 行），未改程式。
+
+   符合：無 `class`；`any` 只有 1 處（`globalThis.HapticFeedback`）；`throw` 只在音訊 infra；亂數與時間由呼叫端傳 seed（`nextRandom`、`shuffled` 為純函式）；偏好、Hub、練習、節奏的儲存都用 try/catch 並保留舊 key 遷移；`readonly` 使用 167 次；reducer 與 `computeLayout`、`resolveFingering`、`buildVoicings` 等為純函式。
+
+   待改善（嚴重度由高到低，皆已列入 backlog B-001～B-006）：
+   1. 領域值是原始型別：`PitchClass`、`Fret` 只是 `number` 別名，`quality` 用 `string`（7 處），且 `ChordQuality`（3 種）與 `FINDER_QUALITIES`（11 種）是兩套並存的概念。
+   2. 領域資料夾帶呈現：`FINDER_QUALITIES.label`、`formula`、`FinderVoicing.title` 是中文 UI 字串，違反「文案集中管理」與 domain 純度。
+   3. 區塊歸位不清：Hub／練習／節奏的 `Storage` 讀寫與 reducer、domain 型別、UI 混在同一大區塊；`ChordHub`（380 行）、`RhythmStudio`（300 行）同時做狀態、用例與畫面。
+   4. 無 `Result`／`Option`、無 `assertNever`：3 個 `switch` 皆未做全面性檢查；偏好載入以臨時型別轉換處理。
+   5. 模組層可變狀態：`voicingCache`、`slashCache`、`rhythmTicket` 與模組載入時執行的 `prefsRepository.load()`。快取為純函式備忘錄尚可，其餘屬副作用。
+   6. 領域搜尋演算法用命令式迴圈與 `let best`（`buildSlashVoicings`、`resolveFingering`），可讀性與可測性較差。
+   另：Domain 單元測試尚未建立（AGENTS.md 第 6 章要求）。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-017-1：要先做哪一項？建議預設：先建立測試工具鏈與音高／和弦／指型的表格化測試（讓後續重構有保護網），再做 1 與 2。
+  - ans:
+
+---
+
+# → 提問 / A-018
+
