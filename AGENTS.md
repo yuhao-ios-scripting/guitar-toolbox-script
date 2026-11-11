@@ -35,11 +35,11 @@ scripts/src/
 └─ ui/        Scripting 的 TSX 畫面；只負責呈現與事件轉發
 ```
 
-> **現況**：程式目前集中在根目錄單一檔案 `index.tsx`（約 3,200 行，版本字串 `APP_VERSION`），以區塊註解分成 Domain / Application / Infrastructure / UI。`scripts/src/` 是**遷移目標**，尚未建立。
+> **現況**：程式目前集中在單一檔案 `GuitarToolbox/index.tsx`（約 3,200 行，版本字串 `APP_VERSION`），以區塊註解分成 Domain / Application / Infrastructure / UI。`scripts/src/` 是**遷移目標**，尚未建立。
 >
-> 在拆檔之前，請在 `index.tsx` 內遵守同樣的依賴方向；新增程式碼時按區塊歸位，不要把副作用寫進 Domain 區塊。拆檔屬於獨立工作，需先取得擁有者同意。
+> 在拆檔之前，請在 `GuitarToolbox/index.tsx` 內遵守同樣的依賴方向；新增程式碼時按區塊歸位，不要把副作用寫進 Domain 區塊。拆檔屬於獨立工作，需先取得擁有者同意。
 
-### 2.0 現有功能與對應區塊（`index.tsx`）
+### 2.0 現有功能與對應區塊（`GuitarToolbox/index.tsx`）
 
 | 分頁（TabView） | 內容 | Domain 型別／函式（節錄） |
 |---|---|---|
@@ -52,8 +52,8 @@ scripts/src/
 
 ### 2.4 工具鏈與已知限制
 
-- 進入點為 `index.tsx`（符合 Scripting 文件）。型別檢查：`npm install` 後執行 `npm run typecheck`（TypeScript 7，`strict`）。提交前必須通過。
-- Scripting 未公開 npm 型別套件，因此 `types/scripting.d.ts` 是**最小型別外殼**：畫面元件的 props 一律放寬為 `any`，**不會被檢查**；Domain／Application／Infrastructure 的型別則完全有效。`index.tsx` 新用到 `scripting` 的名稱或全域 API 時，須同步補在此檔，並以官方文件為準，不得憑空宣告。
+- 要發佈的腳本放在 `GuitarToolbox/`（含 `script.json` 與進入點 `index.tsx`，符合 Scripting 文件）；型別外殼、`package.json`、`tsconfig.json` 與 `.agentflow/` 留在根目錄，不會被匯入。型別檢查：`npm install` 後執行 `npm run typecheck`（TypeScript 7，`strict`）。提交前必須通過。
+- Scripting 未公開 npm 型別套件，因此 `types/scripting.d.ts` 是**最小型別外殼**：畫面元件的 props 一律放寬為 `any`，**不會被檢查**；Domain／Application／Infrastructure 的型別則完全有效。`GuitarToolbox/index.tsx` 新用到 `scripting` 的名稱或全域 API 時，須同步補在此檔，並以官方文件為準，不得憑空宣告。
 - 專案尚無單元測試與建置腳本；新增前請先與擁有者確認工具鏈。
 
 ### 2.1 Bounded Context（限界上下文）
@@ -232,7 +232,7 @@ scripts/src/
 
 文件入口：<https://scriptingapp.github.io/>，頁面路徑格式為 `/guide/<Section>/<Page>`。
 
-- **進入點與呈現**：`index.tsx`；以 `Navigation.present({ element })` 呈現，關閉後必須呼叫 `Script.exit()` 避免記憶體洩漏（現有程式已照做）。
+- **進入點與呈現**：`GuitarToolbox/index.tsx`；以 `Navigation.present({ element })` 呈現，關閉後必須呼叫 `Script.exit()` 避免記憶體洩漏（現有程式已照做）。
 - **匯入**：所有元件與 API 皆從 `"scripting"` 匯入；支援 `useState`、`useEffect`、`useReducer`、`useCallback`、`useMemo`、`useContext`。
 - **導覽**：`NavigationStack`、`TabView`、`NavigationSplitView`（iPad 雙欄／三欄）。
 - **裝置與版面**：`Device`（`isiPad`、`isiPhone`、`screen`、`colorScheme`、`orientation`、`isLandscape`）、`GeometryReader`、`EnvironmentValuesReader`。文件**未提及** `useWindowSize`，請勿假設存在。
@@ -290,9 +290,16 @@ scripts/src/
 | 第一個穩定版本 | 擁有者決定後升為 `1.0.0` |
 | 只改文件、設定或開發紀錄，且 app 行為完全不變 | 可不調整，並在 commit 訊息註明 |
 
-版本號碼須**同步**更新三處：`index.tsx` 的 `APP_VERSION`（設定頁顯示）、`package.json` 的 `version`、`package-lock.json` 的 `version`（根項目兩處）。commit 訊息標題建議附上新版本，例如 `feat: 把位練習 (0.1.0)`。
+版本號碼須**同步**更新四處：`GuitarToolbox/index.tsx` 的 `APP_VERSION`（設定頁顯示）、`GuitarToolbox/script.json` 的 `version`（Scripting 更新依此判斷）、`package.json` 的 `version`、`package-lock.json` 的 `version`（根項目兩處）。commit 訊息標題建議附上新版本，例如 `feat: 把位練習 (0.1.0)`。
 
-## 9. 禁止事項
+## 9. 發佈
+
+- 發佈方式為 GitHub 匯入連結，做法見 [README.md](README.md#安裝install)。官方文件沒有商店或審核流程。
+- 被匯入的資料夾必須含 `script.json` 與 `index.tsx`。`script.json` 欄位（`name`、`description`、`version`、`icon`、`color`）參考擁有者另一個已可匯入的專案；文件未載明完整格式，**不要自行新增未確認的欄位**。`remoteResource` 的雜湊由 app 維護，不要手寫。
+- 發佈前須在實機確認：匯入成功、啟動正常；若使用者開啟「每個腳本單獨授權」，`FileManager` 暫存檔與音訊播放是否需要 `fileSystem` 權限（官方文件未載明）。
+- 推送、建立 release 或變更遠端設定需擁有者同意。
+
+## 10. 禁止事項
 
 - 不在 domain 層寫副作用或引入 Scripting API。
 - 不使用中國大陸慣用樂理譯名；不混用同一概念的多種譯名。

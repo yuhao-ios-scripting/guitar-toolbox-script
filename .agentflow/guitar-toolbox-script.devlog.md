@@ -8,9 +8,9 @@
 
 分支：main
 
-目前工作：A-011 等待下一個請求。
+目前工作：A-013 等待下一個請求。
 
-已驗證：A-010 Pattern 全面改稱「把位」，版本 0.0.2（npm run typecheck 零錯誤；尚未在實機驗證）。
+已驗證：A-012 app 移入 GuitarToolbox/ 並新增 script.json，版本 0.0.3（npm run typecheck 零錯誤；尚未在實機匯入驗證，尚未推送）。
 
 下一步：等待請求。
 
@@ -211,3 +211,45 @@
 ---
 
 # → 提問 / A-011
+
++ godev 研究如何發佈Scripting腳本
+
+# → 回覆 / A-011
+
+* _2026-11-12 04:10:00 +0800_
+
+1. `godev 研究如何發佈Scripting腳本`
+
+   官方文件沒有商店或審核式的發佈流程。可行做法是：在 GitHub 公開專案，並提供 `scripting.fun` 或 `scripting://import_scripts` 匯入連結；專案根目錄必須有 `script.json` 與 `index.tsx`。本專案目前缺少 `script.json`。尚未修改程式。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-011-1：是否採用 GitHub 匯入連結方式發佈？建議預設：是。
+  - ans:
+- Q-011-2：`script.json` 完整欄位文件未載明。是否由你從 Scripting app 匯出一份現有腳本的 `script.json` 給我參考？建議預設：是，避免自行猜測欄位。
+  - ans:
+- Q-011-3：是否把 app 檔案移入子資料夾（如 `GuitarToolbox/`），讓匯入時不帶入 `.agentflow/`、`types/` 等開發檔案？建議預設：是。
+  - ans:
+
+---
+
+# → 提問 / A-012
+
++ godev 採用建議，app 移入子資料夾並新增 script.json
+
+# → 回覆 / A-012
+
+* _2026-11-12 04:40:00 +0800_
+
+1. `godev 採用建議，app 移入子資料夾並新增 script.json`
+
+   app 已移入 `GuitarToolbox/`，新增 `script.json`（欄位參考擁有者的 taiwan-music-festival 專案）。README 新增匯入連結與專案結構，AGENTS.md 新增發佈章節，版本號碼改為四處同步，版本升為 0.0.3。`npm run typecheck` 零錯誤。已處理 Q-011-1、Q-011-2、Q-011-3。匯入連結需推送到 GitHub 後才有效，尚未推送。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-012-1：`script.json` 的圖示（`guitars`）與色彩（`#B45309`）是我暫定的。是否調整？建議預設：維持。
+  - ans:
+
+---
+
+# → 提問 / A-013

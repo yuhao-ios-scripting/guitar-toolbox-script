@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["index.tsx", "types/**/*.d.ts"]
+  "include": ["GuitarToolbox/index.tsx", "types/**/*.d.ts"]
 }

@@ -4,7 +4,7 @@
 
 A collection of guitar utility scripts for the Scripting app on iOS / iPadOS.
 
-目前整個 app 位於單一檔案 [`index.tsx`](index.tsx)，使用 TabView 分成三個分頁。
+目前整個 app 位於單一檔案 [`GuitarToolbox/index.tsx`](GuitarToolbox/index.tsx)，使用 TabView 分成三個分頁。
 
 ## 功能｜Features
 
@@ -58,7 +58,7 @@ A collection of guitar utility scripts for the Scripting app on iOS / iPadOS.
 
 ## 架構｜Architecture
 
-`index.tsx` 內以區塊註解分層：
+`GuitarToolbox/index.tsx` 內以區塊註解分層：
 
 ```
 Domain          音名、和弦、音階、節奏、指板——純函式與不可變資料
@@ -71,19 +71,27 @@ UI              Scripting 元件，只負責把狀態畫出來
 
 長期目標是拆成 `scripts/src/{domain,app,infra,ui}`，細節與規則請見 [AGENTS.md](AGENTS.md)。
 
-## 開始使用｜Getting Started
+## 安裝｜Install
 
-1. 在 iPhone 或 iPad 安裝 [**Scripting**](https://scriptingapp.github.io/) app。
-2. 複製本專案：
+在已安裝 [**Scripting**](https://scriptingapp.github.io/) app 的 iPhone 或 iPad 上，用 Safari 開啟下方連結，依畫面指示開啟 Scripting 並確認匯入：
 
-   ```sh
-   git clone https://github.com/yuhao-ios-scripting/guitar-toolbox-script.git
-   ```
+[匯入吉他工具箱](https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2Fyuhao-ios-scripting%2Fguitar-toolbox-script%2Ftree%2Fmain%2FGuitarToolbox%22%5D)
 
-3. 將 `index.tsx` 放入 Scripting app 的腳本專案資料夾（可透過「檔案」app 或 iCloud Drive）。
-4. 在 Scripting app 中開啟並執行。
+連結內容是本專案 `GuitarToolbox/` 資料夾的 GitHub 網址（`https://github.com/yuhao-ios-scripting/guitar-toolbox-script/tree/main/GuitarToolbox`）。若瀏覽器沒有自動開啟 Scripting，請點頁面上的「Try Again」；也可以在 `scripting.fun/import_scripts` 貼上網址自行產生連結。
 
-> 進入點為 `index.tsx`，符合 Scripting 官方文件：[Quick Start](https://scriptingapp.github.io/guide/Quick%20Start)。
+> 連結需要本專案已推送到 GitHub 的 `main` 分支才有效。
+
+**更新**：在 Scripting app 的腳本設定把來源設為同一個 GitHub 網址，並可設定自動檢查更新的間隔（最短 30 分鐘）。每次發佈前須遞增 `GuitarToolbox/script.json` 的 `version`。
+
+## 專案結構｜Layout
+
+```
+GuitarToolbox/   要匯入 Scripting app 的腳本：script.json（名稱、版本、圖示）與 index.tsx
+types/           開發用的 Scripting 最小型別外殼（不會被匯入）
+.agentflow/      開發紀錄
+```
+
+只有 `GuitarToolbox/` 會被匯入；型別檢查等開發檔案留在專案根目錄。
 
 ## 開發｜Development
 
