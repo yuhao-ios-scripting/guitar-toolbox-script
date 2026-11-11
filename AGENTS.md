@@ -222,6 +222,10 @@ scripts/src/
 | 夾撥／交替低音 | Pinch / Alternating bass (Travis) | |
 | 下刷／上刷／悶音切刷／休止 | Down-stroke / Up-stroke / Muted stroke / Rest | |
 | 小節（1 小節、2 小節、無限） | Bar (1 bar, 2 bars, Loop) | 無限＝循環播放直到按停止 |
+| 大調音階（Ionian）／自然小音階（Aeolian） | Major scale (Ionian) / Natural minor (Aeolian) | |
+| 大調／小調五聲音階 | Major / Minor pentatonic | |
+| 藍調音階／和聲小音階 | Blues scale / Harmonic minor | |
+| 找音／認音 | Find Notes / Name Notes | 音階分頁的兩種練習 |
 
 > **一致性**：程式與 UI 既有用語（主音、音級、按法、橫按／封閉和弦、斜線和弦、琶音、刷弦、指彈、悶音）為準。「斜線和弦」與「分數和弦」、「橫按」與「封閉和弦」目前並用，新增文案請固定採用：**斜線和弦**、**封閉和弦（橫按）**。「掃弦」在吉他另指 sweep picking，描述刷奏時請用「刷弦」。
 >

@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.8.0"
+const APP_VERSION = "0.9.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -85,9 +85,9 @@ const R = (node: JSX.Element): Placed => ({ pane: "right", node })
 
 // 清單雙欄：橫式 iPad 左右各一個 List；其餘情況用 single 的順序合併成單一 List
 function SplitList(props: {
-  layout: Layout; left: JSX.Element[]; right: JSX.Element[]; single?: JSX.Element[]
+  layout: Layout; t: Translate; left: JSX.Element[]; right: JSX.Element[]; single?: JSX.Element[]
 }) {
-  const { layout, left, right, single } = props
+  const { layout, t, left, right, single } = props
   if (!layout.split) return <List>{single ?? [...left, ...right]}</List>
   return (
     <HStack spacing={0}>
@@ -95,7 +95,7 @@ function SplitList(props: {
       <List>
         {right.length > 0 ? right : [
           <Section key="empty">
-            <Text foregroundStyle="secondaryLabel">請在左側選擇內容，詳細指法會顯示在這裡。</Text>
+            <Text foregroundStyle="secondaryLabel">{t("split.empty")}</Text>
           </Section>,
         ]}
       </List>
@@ -415,7 +415,11 @@ const synth = (() => {
     warm(): void { void prepareSession() },
     stop(): void { ticket++; halt() },
     // loopSeconds 有值時無限循環播放（直到 stop），檔案長度即一圈的長度
-    async playEvents(events: readonly NoteEvent[], loopSeconds?: number): Promise<void> {
+    // onStart：聲音「真正開始」的時刻（毫秒時間戳）。播放前要渲染、載入，延遲不固定，
+    // 畫面上的播放游標必須以這個時刻為起點，才會和聲音對齊
+    async playEvents(
+      events: readonly NoteEvent[], loopSeconds?: number, onStart?: (startedAtMs: number) => void,
+    ): Promise<void> {
       if (events.length === 0) return
       const mine = ++ticket
       try {
@@ -428,7 +432,24 @@ const synth = (() => {
         playingPath = path
         const p = new AVPlayer()
         let started = false
-        const go = () => { if (!started && player === p) { started = true; p.play() } }
+        let announced = false
+        const announce = () => {
+          if (announced || player !== p) return
+          announced = true
+          onStart?.(Date.now())
+        }
+        const go = () => {
+          if (!started && player === p) {
+            started = true
+            p.play()
+            // 備援：若播放器沒有回報狀態變化，play() 後 0.6 秒仍視為已開始
+            setTimeout(announce, 600)
+          }
+        }
+        // 文件：onTimeControlStatusChanged 回報 paused／waitingToPlayAtSpecifiedRate／playing
+        p.onTimeControlStatusChanged = (status: unknown) => {
+          if (String(status).toLowerCase() === "playing") announce()
+        }
         p.onReadyToPlay = go
         p.onError = (msg: string) => { console.error("AVPlayer 錯誤：" + msg) }
         if (loopSeconds !== undefined) p.numberOfLoops = -1 // 文件：負值＝無限循環
@@ -935,7 +956,7 @@ function Fretboard(props: FretboardProps) {
         {prefs.showStringNumbers ? (
           <HStack spacing={0}>
             <Text font="caption2" foregroundStyle="secondaryLabel"
-              frame={{ width: GUTTER, height: 20 }}>{"弦"}</Text>
+              frame={{ width: GUTTER, height: 20 }}>{t("board.string")}</Text>
             {cols.map((c) => (
               <Text key={c} font="caption" fontWeight="bold" foregroundStyle="secondaryLabel"
                 frame={{ width: w, height: 20 }}>{String(STRING_COUNT - c)}</Text>
@@ -967,7 +988,7 @@ function Fretboard(props: FretboardProps) {
         {names ? (
           <HStack spacing={0}>
             <Text font="caption2" foregroundStyle="secondaryLabel"
-              frame={{ width: GUTTER, height: 28 }}>{"音"}</Text>
+              frame={{ width: GUTTER, height: 28 }}>{t("board.note")}</Text>
             {names.map((n, c) => (
               <Text key={c} font="caption" fontWeight="bold"
                 foregroundStyle="label"
@@ -993,7 +1014,7 @@ function Fretboard(props: FretboardProps) {
         ))}
         {names ? (
           <Text font="caption2" foregroundStyle="secondaryLabel"
-            frame={{ width: H_NAME_W, height: 20 }}>{"音"}</Text>
+            frame={{ width: H_NAME_W, height: 20 }}>{t("board.note")}</Text>
         ) : null}
       </HStack>
       {strRows.map((c) => (
@@ -1919,7 +1940,7 @@ function ChordHub({ prefs, layout, t }: { prefs: DiagramPrefs; layout: Layout; t
   return (
     <VStack spacing={0}>
       {layout.split ? null : <VStack spacing={16} padding>{modePicker}</VStack>}
-      <SplitList layout={layout}
+      <SplitList layout={layout} t={t}
         left={[
           ...(layout.split ? [<Section key="mode">{modePicker}</Section>] : []),
           keySection,
@@ -1953,7 +1974,7 @@ const scalePositionRange = (no: ScalePositionNo, root: PitchClass): FretRange =>
   const shift = end > MAX_POSITION_FRET ? 12 : 0
   return { from: Math.max(0, start - shift), to: end - shift }
 }
-const rangeLabel = (r: FretRange): string => `第 ${r.from}–${r.to} 格`
+const rangeLabel = (r: FretRange, t: Translate): string => t("scale.range", { from: r.from, to: r.to })
 
 interface Position { readonly string: StringNo; readonly fret: number }
 interface Zone {
@@ -1999,17 +2020,21 @@ const makeQuestion = (mode: DrillMode, zone: Zone, seed: number): [Question, num
     : [{ mode, zone, position, answer: position.fret, choices: [] }, next]
 }
 const pitchOf = (q: Question): PitchClass => pitchAt(q.position.string, q.position.fret)
-const promptOf = (q: Question, nm: (pc: PitchClass) => string): string =>
+const promptOf = (q: Question, nm: (pc: PitchClass) => string, t: Translate): string =>
   q.mode === "nameNote"
-    ? `第 ${q.position.string} 弦第 ${q.position.fret} 格是什麼音？`
-    : `請在指板上點出第 ${q.position.string} 弦的 ${nm(pitchOf(q))}`
-const expectedLabel = (q: Question): string =>
-  q.mode === "nameNote" ? noteLabel(q.answer) : `第 ${q.answer} 格`
+    ? t("drill.promptName", { string: q.position.string, fret: q.position.fret })
+    : t("drill.promptFind", { string: q.position.string, note: nm(pitchOf(q)) })
+// 正確答案以資料表達（音名或格數），顯示文字由畫面層依語言產生
+type Expected = { readonly type: "note"; readonly label: string } | { readonly type: "fret"; readonly fret: number }
+const expectedOf = (q: Question): Expected =>
+  q.mode === "nameNote" ? { type: "note", label: noteLabel(q.answer) } : { type: "fret", fret: q.answer }
+const expectedText = (e: Expected, t: Translate): string =>
+  e.type === "note" ? e.label : t("drill.expectedFret", { fret: e.fret })
 
 /* ② Application */
 interface Feedback {
   readonly correct: boolean
-  readonly expected: string
+  readonly expected: Expected
   readonly picked: Position | null
 }
 interface Score { readonly correct: number; readonly total: number; readonly streak: number }
@@ -2051,7 +2076,7 @@ const drillReduce = (s: DrillSession, a: DrillAction): DrillSession => {
       return {
         ...s,
         score: scored(s.score, correct),
-        feedback: { correct, expected: expectedLabel(s.question), picked: null },
+        feedback: { correct, expected: expectedOf(s.question), picked: null },
       }
     }
     case "tap": {
@@ -2060,7 +2085,7 @@ const drillReduce = (s: DrillSession, a: DrillAction): DrillSession => {
       return {
         ...s,
         score: scored(s.score, correct),
-        feedback: { correct, expected: expectedLabel(s.question), picked: a.position },
+        feedback: { correct, expected: expectedOf(s.question), picked: a.position },
       }
     }
     case "next": {
@@ -2204,7 +2229,7 @@ function FretboardDrill({ t, prefs, layout, mode, root, scaleIdx, scalePosition,
   // 控制區上半：主音、音階類型、把位（與音階瀏覽相同的選單，設定共用）
   const controlsTop = (
     <VStack spacing={16}>
-      {scalePickers({ root, scaleIdx, scalePosition, allowAll: false, onRoot, onScale, onScalePosition })}
+      {scalePickers({ t, root, scaleIdx, scalePosition, allowAll: false, onRoot, onScale, onScalePosition })}
     </VStack>
   )
 
@@ -2212,7 +2237,10 @@ function FretboardDrill({ t, prefs, layout, mode, root, scaleIdx, scalePosition,
   const quiz = (
     <VStack spacing={16}>
       <Text font="subheadline" foregroundStyle="secondaryLabel">
-        {`${nm(root)} ${scale.label}・把位 ${session.scalePosition}・第 ${q.zone.fromFret}–${q.zone.toFret} 格${showTones ? "　圓點＝和弦音（1・3・5）" : ""}`}
+        {t("scale.drillHeader", {
+          note: nm(root), scale: t(scale.labelKey), n: session.scalePosition,
+          from: q.zone.fromFret, to: q.zone.toFret, tones: showTones ? t("scale.tonesNote") : "",
+        })}
       </Text>
 
       <Fretboard
@@ -2226,10 +2254,10 @@ function FretboardDrill({ t, prefs, layout, mode, root, scaleIdx, scalePosition,
           ? (c, fret) => dispatch({ type: "tap", position: { string: (STRING_COUNT - c) as StringNo, fret } })
           : undefined} />
 
-      <Text font="title3">{promptOf(q, nm)}</Text>
+      <Text font="title3">{promptOf(q, nm, t)}</Text>
 
       {q.mode === "nameNote" && prefs.soundOn ? (
-        <Button title="♪ 重播題目音" buttonStyle="bordered"
+        <Button title={t("drill.replay")} buttonStyle="bordered"
           lineLimit={1} fixedSize={true}
           action={() => playPosition(q.position)} />
       ) : null}
@@ -2246,9 +2274,9 @@ function FretboardDrill({ t, prefs, layout, mode, root, scaleIdx, scalePosition,
       {feedback && (
         <VStack spacing={12}>
           <Text font="headline" foregroundStyle={feedback.correct ? "systemGreen" : "systemRed"}>
-            {feedback.correct ? "答對了！" : `答錯了，正確答案是 ${feedback.expected}`}
+            {feedback.correct ? t("drill.correct") : t("drill.wrong", { expected: expectedText(feedback.expected, t) })}
           </Text>
-          <Button title="下一題" buttonStyle="borderedProminent"
+          <Button title={t("drill.next")} buttonStyle="borderedProminent"
             action={() => dispatch({ type: "next" })} />
         </VStack>
       )}
@@ -2260,20 +2288,20 @@ function FretboardDrill({ t, prefs, layout, mode, root, scaleIdx, scalePosition,
     <VStack spacing={16}>
       <VStack spacing={4}>
         <Text font="footnote" foregroundStyle="secondaryLabel">
-          {`得分 ${score.correct} / ${score.total}（${accuracy}%）`}
+          {t("drill.score", { correct: score.correct, total: score.total, accuracy })}
         </Text>
         <Text font="footnote" foregroundStyle="secondaryLabel">
-          {`連對 ${score.streak}・最佳連對 ${best}`}
+          {t("drill.streak", { streak: score.streak, best })}
         </Text>
         {score.total > 0 ? (
-          <Button title="重設分數" buttonStyle="borderless"
+          <Button title={t("drill.reset")} buttonStyle="borderless"
             action={() => dispatch({ type: "configure" })} />
         ) : null}
       </VStack>
 
-      <Toggle title="顯示和弦音圓點" value={showTones}
+      <Toggle title={t("drill.showTones")} value={showTones}
         onChanged={(v: boolean) => setShowTones(v)} />
-      <Toggle title="顯示音名" value={showNames}
+      <Toggle title={t("drill.showNames")} value={showNames}
         onChanged={(v: boolean) => setShowNames(v)} />
     </VStack>
   )
@@ -2298,22 +2326,22 @@ function FretboardDrill({ t, prefs, layout, mode, root, scaleIdx, scalePosition,
  * ════════════════════════════════════════════════ */
 interface ScaleDef {
   readonly key: string
-  readonly label: string
+  readonly labelKey: MessageKey
   readonly intervals: readonly number[] // 與主音的半音距離
   readonly degrees: readonly string[]   // 對應的音級標示
 }
 
 const SCALES: readonly ScaleDef[] = [
-  { key: "major", label: "大調音階（Ionian）", intervals: [0, 2, 4, 5, 7, 9, 11], degrees: ["1", "2", "3", "4", "5", "6", "7"] },
-  { key: "minor", label: "自然小音階（Aeolian）", intervals: [0, 2, 3, 5, 7, 8, 10], degrees: ["1", "2", "♭3", "4", "5", "♭6", "♭7"] },
-  { key: "majPent", label: "大調五聲音階", intervals: [0, 2, 4, 7, 9], degrees: ["1", "2", "3", "5", "6"] },
-  { key: "minPent", label: "小調五聲音階", intervals: [0, 3, 5, 7, 10], degrees: ["1", "♭3", "4", "5", "♭7"] },
-  { key: "blues", label: "藍調音階", intervals: [0, 3, 5, 6, 7, 10], degrees: ["1", "♭3", "4", "♭5", "5", "♭7"] },
-  { key: "dorian", label: "多利安（Dorian）", intervals: [0, 2, 3, 5, 7, 9, 10], degrees: ["1", "2", "♭3", "4", "5", "6", "♭7"] },
-  { key: "mixolydian", label: "米索利地安（Mixolydian）", intervals: [0, 2, 4, 5, 7, 9, 10], degrees: ["1", "2", "3", "4", "5", "6", "♭7"] },
-  { key: "lydian", label: "利地安（Lydian）", intervals: [0, 2, 4, 6, 7, 9, 11], degrees: ["1", "2", "3", "♯4", "5", "6", "7"] },
-  { key: "phrygian", label: "弗里吉安（Phrygian）", intervals: [0, 1, 3, 5, 7, 8, 10], degrees: ["1", "♭2", "♭3", "4", "5", "♭6", "♭7"] },
-  { key: "harmonicMinor", label: "和聲小音階", intervals: [0, 2, 3, 5, 7, 8, 11], degrees: ["1", "2", "♭3", "4", "5", "♭6", "7"] },
+  { key: "major", labelKey: "scale.name.major", intervals: [0, 2, 4, 5, 7, 9, 11], degrees: ["1", "2", "3", "4", "5", "6", "7"] },
+  { key: "minor", labelKey: "scale.name.minor", intervals: [0, 2, 3, 5, 7, 8, 10], degrees: ["1", "2", "♭3", "4", "5", "♭6", "♭7"] },
+  { key: "majPent", labelKey: "scale.name.majPent", intervals: [0, 2, 4, 7, 9], degrees: ["1", "2", "3", "5", "6"] },
+  { key: "minPent", labelKey: "scale.name.minPent", intervals: [0, 3, 5, 7, 10], degrees: ["1", "♭3", "4", "5", "♭7"] },
+  { key: "blues", labelKey: "scale.name.blues", intervals: [0, 3, 5, 6, 7, 10], degrees: ["1", "♭3", "4", "♭5", "5", "♭7"] },
+  { key: "dorian", labelKey: "scale.name.dorian", intervals: [0, 2, 3, 5, 7, 9, 10], degrees: ["1", "2", "♭3", "4", "5", "6", "♭7"] },
+  { key: "mixolydian", labelKey: "scale.name.mixolydian", intervals: [0, 2, 4, 5, 7, 9, 10], degrees: ["1", "2", "3", "4", "5", "6", "♭7"] },
+  { key: "lydian", labelKey: "scale.name.lydian", intervals: [0, 2, 4, 6, 7, 9, 11], degrees: ["1", "2", "3", "♯4", "5", "6", "7"] },
+  { key: "phrygian", labelKey: "scale.name.phrygian", intervals: [0, 1, 3, 5, 7, 8, 10], degrees: ["1", "♭2", "♭3", "4", "5", "♭6", "♭7"] },
+  { key: "harmonicMinor", labelKey: "scale.name.harmonicMinor", intervals: [0, 2, 3, 5, 7, 8, 11], degrees: ["1", "2", "♭3", "4", "5", "♭6", "7"] },
 ]
 
 const CHORD_TONE_INTERVALS: readonly number[] = [0, 3, 4, 7] // 根音、三音、五音
@@ -2385,23 +2413,23 @@ type ScalePositionFilter = 0 | ScalePositionNo
 // 主音、音階類型、把位三個選單：音階瀏覽與找音、認音共用同一組 UI 與設定
 // allowAll：是否提供「全部」（找音、認音一定要選定某個把位）
 function scalePickers(p: {
-  root: PitchClass; scaleIdx: number; scalePosition: ScalePositionFilter; allowAll: boolean
+  t: Translate; root: PitchClass; scaleIdx: number; scalePosition: ScalePositionFilter; allowAll: boolean
   onRoot: (v: number) => void; onScale: (v: number) => void; onScalePosition: (v: ScalePositionFilter) => void
 }): JSX.Element[] {
   return [
-    <Picker key="root" title="主音" value={p.root} pickerStyle="menu"
+    <Picker key="root" title={p.t("hub.tonic")} value={p.root} pickerStyle="menu"
       onChanged={(v: number) => p.onRoot(v)}>
-      {TONIC_LABELS.map((t, i) => <Text key={i} tag={i}>{t}</Text>)}
+      {TONIC_LABELS.map((label, i) => <Text key={i} tag={i}>{label}</Text>)}
     </Picker>,
-    <Picker key="scale" title="音階類型" value={p.scaleIdx} pickerStyle="menu"
+    <Picker key="scale" title={p.t("scale.type")} value={p.scaleIdx} pickerStyle="menu"
       onChanged={(v: number) => p.onScale(v)}>
-      {SCALES.map((sc, i) => <Text key={sc.key} tag={i}>{sc.label}</Text>)}
+      {SCALES.map((sc, i) => <Text key={sc.key} tag={i}>{p.t(sc.labelKey)}</Text>)}
     </Picker>,
-    <Picker key="scalePosition" title="把位" value={p.scalePosition} pickerStyle="menu"
+    <Picker key="scalePosition" title={p.t("scale.position")} value={p.scalePosition} pickerStyle="menu"
       onChanged={(v: number) => p.onScalePosition(v as ScalePositionFilter)}>
-      {p.allowAll ? <Text tag={0}>全部（自訂範圍）</Text> : null}
+      {p.allowAll ? <Text tag={0}>{p.t("scale.positionAll")}</Text> : null}
       {SCALE_POSITION_NOS.map((n) => (
-        <Text key={n} tag={n}>{`把位 ${n}（${rangeLabel(scalePositionRange(n, p.root))}）`}</Text>
+        <Text key={n} tag={n}>{p.t("scale.positionItem", { n, range: rangeLabel(scalePositionRange(n, p.root), p.t) })}</Text>
       ))}
     </Picker>,
   ]
@@ -2444,72 +2472,74 @@ function ScaleExplorer({ t, prefs, layout, root, scaleIdx, scalePosition, onRoot
   const degrees = scale.degrees.join("  ")
   const lastFret = startFret + rows - 1
   const legend = [
-    prefs.highlightRoot ? "橘色＝根音" : "",
-    emphasize ? "實心＝1・3・5，空心＝其他音階音" : "圓點＝音階音",
+    prefs.highlightRoot ? t("scale.legend.root") : "",
+    emphasize ? t("scale.legend.emphasize") : t("scale.legend.dots"),
   ].filter(Boolean).join("　")
 
   return (
-    <SplitList layout={layout}
+    <SplitList layout={layout} t={t}
       left={[
-        <Section key="scale" header={<Text>音階</Text>}>
+        <Section key="scale" header={<Text>{t("scale.section")}</Text>}>
           {scalePickers({
-            root, scaleIdx, scalePosition, allowAll: true,
+            t, root, scaleIdx, scalePosition, allowAll: true,
             onRoot: (v) => { onRoot(v); audition(v, scaleIdx) },
             onScale: (v) => { onScale(v); audition(root, v) },
             onScalePosition,
           })}
         </Section>,
 
-        <Section key="comp" header={<Text>音階組成</Text>}>
+        <Section key="comp" header={<Text>{t("scale.composition")}</Text>}>
           <VStack alignment="leading" spacing={4}>
-            <Text font="headline">{`組成音：${notes}`}</Text>
-            <Text font="subheadline" foregroundStyle="secondaryLabel">{`音級：${degrees}`}</Text>
+            <Text font="headline">{t("chord.notes", { notes })}</Text>
+            <Text font="subheadline" foregroundStyle="secondaryLabel">{t("scale.degrees", { degrees })}</Text>
           </VStack>
           {prefs.soundOn ? (
             <HStack spacing={8}>
-              <Button title="↗ 上行" buttonStyle="bordered"
+              <Button title={t("scale.up")} buttonStyle="bordered"
                 lineLimit={1} fixedSize={true}
                 action={() => playScale(root, scale, "up")} />
-              <Button title="↘ 下行" buttonStyle="bordered"
+              <Button title={t("scale.down")} buttonStyle="bordered"
                 lineLimit={1} fixedSize={true}
                 action={() => playScale(root, scale, "down")} />
-              <Button title="♪ 和弦音" buttonStyle="bordered"
+              <Button title={t("scale.chordTones")} buttonStyle="bordered"
                 lineLimit={1} fixedSize={true}
                 action={() => playScale(root, scale, "chord")} />
             </HStack>
           ) : null}
         </Section>,
 
-        <Section key="opts" header={<Text>標示與範圍</Text>}
-          footer={<Text>{`橫式指板顯示格數超過 ${layout.maxHRows} 格時會自動改用直式（上限依目前螢幕與方向自動計算）。輕點指板上任一格即可聽到該音。`}</Text>}>
-          <Picker title="標示" value={label} pickerStyle="segmented"
+        <Section key="opts" header={<Text>{t("scale.options")}</Text>}
+          footer={<Text>{t("scale.options.footer", { rows: layout.maxHRows })}</Text>}>
+          <Picker title={t("scale.label")} value={label} pickerStyle="segmented"
             onChanged={(v: string) => setLabel(v as LabelMode)}>
-            <Text tag="degree">音級</Text>
-            <Text tag="name">音名</Text>
-            <Text tag="none">無</Text>
+            <Text tag="degree">{t("scale.label.degree")}</Text>
+            <Text tag="name">{t("scale.label.name")}</Text>
+            <Text tag="none">{t("scale.label.none")}</Text>
           </Picker>
-          <Toggle title="強調和弦音（1・3・5）" value={emphasize}
+          <Toggle title={t("scale.emphasize")} value={emphasize}
             onChanged={(v: boolean) => setEmphasize(v)} />
           {pr ? null : (
-            <Picker title="起始格" value={customStart} pickerStyle="menu"
+            <Picker title={t("scale.startFret")} value={customStart} pickerStyle="menu"
               onChanged={(v: number) => setStartFret(v)}>
               {range(13).map((n) => (
-                <Text key={n} tag={n}>{n === 0 ? "0（含空弦）" : `第 ${n} 格`}</Text>
+                <Text key={n} tag={n}>{n === 0 ? t("scale.startFret.open") : t("scale.startFret.n", { n })}</Text>
               ))}
             </Picker>
           )}
           {pr ? null : (
-            <Picker title="顯示格數" value={customRows} pickerStyle="segmented"
+            <Picker title={t("scale.rows")} value={customRows} pickerStyle="segmented"
               onChanged={(v: number) => setRows(v)}>
-              <Text tag={5}>5 格</Text>
-              <Text tag={7}>7 格</Text>
-              <Text tag={13}>13 格</Text>
+              {[5, 7, 13].map((n) => <Text key={n} tag={n}>{t("settings.fretRows.option", { n })}</Text>)}
             </Picker>
           )}
         </Section>,
       ]}
       right={[
-        <Section key="board" header={<Text>{`${nm(root)} ${scale.label}${scalePosition === 0 ? "" : `・把位 ${scalePosition}`}・第 ${startFret}–${lastFret} 格`}</Text>}>
+        <Section key="board" header={<Text>{t("scale.boardHeader", {
+          note: nm(root), scale: t(scale.labelKey),
+          position: scalePosition === 0 ? "" : t("scale.positionSuffix", { n: scalePosition }),
+          from: startFret, to: lastFret,
+        })}</Text>}>
           <HStack>
             <Spacer />
             <Fretboard startFret={startFret} rows={rows} marks={marks} prefs={boardPrefs} t={t}
@@ -2544,11 +2574,11 @@ function ScaleTab({ prefs, layout, t }: { prefs: DiagramPrefs; layout: Layout; t
   }
   return (
     <VStack spacing={0}>
-      <Picker title="頁面" value={page} pickerStyle="segmented" padding
+      <Picker title={t("scale.page")} value={page} pickerStyle="segmented" padding
         onChanged={(v: string) => change(v as ScaleTabPage)}>
-        <Text tag="browse">瀏覽</Text>
-        <Text tag="findNote">找音</Text>
-        <Text tag="nameNote">認音</Text>
+        <Text tag="browse">{t("scale.page.browse")}</Text>
+        <Text tag="findNote">{t("scale.page.findNote")}</Text>
+        <Text tag="nameNote">{t("scale.page.nameNote")}</Text>
       </Picker>
       {page === "browse"
         ? <ScaleExplorer prefs={prefs} layout={layout} t={t}
@@ -3138,7 +3168,7 @@ const rhythmChordSections = (c: RhythmChordCtx): JSX.Element[] => {
 /* ④ UI：節奏分頁 */
 interface Run { readonly startedAt: number; readonly plan: PlayPlan }
 
-// 播放游標的時鐘：約每 60 毫秒回報一次時間，播完自動呼叫 onDone
+// 播放游標的時鐘：約每 40 毫秒回報一次時間，播完自動呼叫 onDone
 // Scripting 沒有 setInterval，改用遞迴 setTimeout
 function usePlaybackClock(run: Run | null, onTick: (t: number) => void, onDone: () => void): void {
   useEffect(() => {
@@ -3153,9 +3183,9 @@ function usePlaybackClock(run: Run | null, onTick: (t: number) => void, onDone: 
         onDone()
         return
       }
-      timer = setTimeout(tick, 60)
+      timer = setTimeout(tick, 40)
     }
-    timer = setTimeout(tick, 60)
+    timer = setTimeout(tick, 40)
     return () => {
       alive = false
       if (timer !== undefined) clearTimeout(timer)
@@ -3236,11 +3266,12 @@ function RhythmStudio({ prefs, active, layout, t }: { prefs: DiagramPrefs; activ
     haptic(prefs, "light")
     const mine = ++ticket.current
     setRun(null)
-    await synth.playEvents(planEvents(plan), looping ? planPassSeconds(plan) : undefined)
-    if (mine !== ticket.current) return
-    const startedAt = Date.now() + 120 // 音訊從準備好到真正出聲約有一點延遲
-    setNow(startedAt)
-    setRun({ startedAt, plan })
+    // 游標以「聲音真正開始」的時刻為起點（渲染與載入的延遲不固定，不能用估計值）
+    await synth.playEvents(planEvents(plan), looping ? planPassSeconds(plan) : undefined, (startedAt) => {
+      if (mine !== ticket.current) return
+      setNow(startedAt)
+      setRun({ startedAt, plan })
+    })
   }
   const stop = () => { ticket.current++; synth.stop(); setRun(null) }
 
@@ -3293,7 +3324,12 @@ function RhythmStudio({ prefs, active, layout, t }: { prefs: DiagramPrefs; activ
     ...rhythmChordSections({ s, prefs, bw, t, naming, voicings, chosenIdx, changeChord, chooseVoicing }),
   ]
 
-  return <SplitList layout={layout} left={leftSections} right={rightSections} />
+  // 單欄（手機）依序：節奏型態、節奏圖、播放、選擇和弦與指法；iPad 雙欄時左欄控制、右欄節奏圖與和弦
+  const gridSection = rightSections[0]
+  const chordSections = rightSections.slice(1)
+  const single = [leftSections[0], gridSection, ...leftSections.slice(1), ...chordSections]
+
+  return <SplitList layout={layout} t={t} left={leftSections} right={rightSections} single={single} />
 }
 
 /* ════════════════════════════════════════════════
@@ -3540,6 +3576,64 @@ const MESSAGES_ZH_TW = {
   "stroke.U": "上刷",
   "stroke.X": "悶音切刷",
   "stroke.rest": "休止",
+  "scale.name.major": "大調音階（Ionian）",
+  "scale.name.minor": "自然小音階（Aeolian）",
+  "scale.name.majPent": "大調五聲音階",
+  "scale.name.minPent": "小調五聲音階",
+  "scale.name.blues": "藍調音階",
+  "scale.name.dorian": "多利安（Dorian）",
+  "scale.name.mixolydian": "米索利地安（Mixolydian）",
+  "scale.name.lydian": "利地安（Lydian）",
+  "scale.name.phrygian": "弗里吉安（Phrygian）",
+  "scale.name.harmonicMinor": "和聲小音階",
+  "scale.page": "頁面",
+  "scale.page.browse": "瀏覽",
+  "scale.page.findNote": "找音",
+  "scale.page.nameNote": "認音",
+  "scale.type": "音階類型",
+  "scale.position": "把位",
+  "scale.positionAll": "全部（自訂範圍）",
+  "scale.positionItem": "把位 {n}（{range}）",
+  "scale.range": "第 {from}–{to} 格",
+  "scale.section": "音階",
+  "scale.composition": "音階組成",
+  "scale.degrees": "音級：{degrees}",
+  "scale.up": "↗ 上行",
+  "scale.down": "↘ 下行",
+  "scale.chordTones": "♪ 和弦音",
+  "scale.options": "標示與範圍",
+  "scale.options.footer": "橫式指板顯示格數超過 {rows} 格時會自動改用直式（上限依目前螢幕與方向自動計算）。輕點指板上任一格即可聽到該音。",
+  "scale.label": "標示",
+  "scale.label.degree": "音級",
+  "scale.label.name": "音名",
+  "scale.label.none": "無",
+  "scale.emphasize": "強調和弦音（1・3・5）",
+  "scale.startFret": "起始格",
+  "scale.startFret.open": "0（含空弦）",
+  "scale.startFret.n": "第 {n} 格",
+  "scale.rows": "顯示格數",
+  "scale.legend.root": "橘色＝根音",
+  "scale.legend.emphasize": "實心＝1・3・5，空心＝其他音階音",
+  "scale.legend.dots": "圓點＝音階音",
+  "scale.boardHeader": "{note} {scale}{position}・第 {from}–{to} 格",
+  "scale.positionSuffix": "・把位 {n}",
+  "scale.drillHeader": "{note} {scale}・把位 {n}・第 {from}–{to} 格{tones}",
+  "scale.tonesNote": "　圓點＝和弦音（1・3・5）",
+  "drill.promptName": "第 {string} 弦第 {fret} 格是什麼音？",
+  "drill.promptFind": "請在指板上點出第 {string} 弦的 {note}",
+  "drill.expectedFret": "第 {fret} 格",
+  "drill.correct": "答對了！",
+  "drill.wrong": "答錯了，正確答案是 {expected}",
+  "drill.next": "下一題",
+  "drill.replay": "♪ 重播題目音",
+  "drill.score": "得分 {correct} / {total}（{accuracy}%）",
+  "drill.streak": "連對 {streak}・最佳連對 {best}",
+  "drill.reset": "重設分數",
+  "drill.showTones": "顯示和弦音圓點",
+  "drill.showNames": "顯示音名",
+  "split.empty": "請在左側選擇內容，詳細指法會顯示在這裡。",
+  "board.string": "弦",
+  "board.note": "音",
 } as const
 type MessageKey = keyof typeof MESSAGES_ZH_TW
 type Messages = Readonly<Record<MessageKey, string>>
@@ -3761,6 +3855,64 @@ const MESSAGES_EN: Messages = {
   "stroke.U": "Up-stroke",
   "stroke.X": "Muted stroke",
   "stroke.rest": "Rest",
+  "scale.name.major": "Major scale (Ionian)",
+  "scale.name.minor": "Natural minor (Aeolian)",
+  "scale.name.majPent": "Major pentatonic",
+  "scale.name.minPent": "Minor pentatonic",
+  "scale.name.blues": "Blues scale",
+  "scale.name.dorian": "Dorian",
+  "scale.name.mixolydian": "Mixolydian",
+  "scale.name.lydian": "Lydian",
+  "scale.name.phrygian": "Phrygian",
+  "scale.name.harmonicMinor": "Harmonic minor",
+  "scale.page": "Page",
+  "scale.page.browse": "Browse",
+  "scale.page.findNote": "Find Notes",
+  "scale.page.nameNote": "Name Notes",
+  "scale.type": "Scale Type",
+  "scale.position": "Scale Position",
+  "scale.positionAll": "All (custom range)",
+  "scale.positionItem": "Position {n} ({range})",
+  "scale.range": "frets {from}–{to}",
+  "scale.section": "Scale",
+  "scale.composition": "Scale Notes",
+  "scale.degrees": "Degrees: {degrees}",
+  "scale.up": "↗ Up",
+  "scale.down": "↘ Down",
+  "scale.chordTones": "♪ Chord Tones",
+  "scale.options": "Labels & Range",
+  "scale.options.footer": "If a horizontal fretboard would show more than {rows} frets, it switches to vertical automatically (the limit depends on the current screen and orientation). Tap any fret on the board to hear that note.",
+  "scale.label": "Labels",
+  "scale.label.degree": "Degree",
+  "scale.label.name": "Note Name",
+  "scale.label.none": "None",
+  "scale.emphasize": "Emphasize Chord Tones (1, 3, 5)",
+  "scale.startFret": "Start Fret",
+  "scale.startFret.open": "0 (includes open strings)",
+  "scale.startFret.n": "Fret {n}",
+  "scale.rows": "Frets Shown",
+  "scale.legend.root": "Orange = root note",
+  "scale.legend.emphasize": "Solid = 1, 3, 5; hollow = other scale notes",
+  "scale.legend.dots": "Dots = scale notes",
+  "scale.boardHeader": "{note} {scale}{position} · frets {from}–{to}",
+  "scale.positionSuffix": " · scale position {n}",
+  "scale.drillHeader": "{note} {scale} · scale position {n} · frets {from}–{to}{tones}",
+  "scale.tonesNote": "  Dots = chord tones (1, 3, 5)",
+  "drill.promptName": "What note is on string {string}, fret {fret}?",
+  "drill.promptFind": "Tap {note} on string {string} of the fretboard",
+  "drill.expectedFret": "fret {fret}",
+  "drill.correct": "Correct!",
+  "drill.wrong": "Wrong — the answer is {expected}",
+  "drill.next": "Next Question",
+  "drill.replay": "♪ Replay Note",
+  "drill.score": "Score {correct} / {total} ({accuracy}%)",
+  "drill.streak": "Streak {streak} · Best streak {best}",
+  "drill.reset": "Reset Score",
+  "drill.showTones": "Show Chord-Tone Dots",
+  "drill.showNames": "Show Note Names",
+  "split.empty": "Choose an item on the left; the details appear here.",
+  "board.string": "Str.",
+  "board.note": "Note",
 }
 const CATALOG: Readonly<Record<Lang, Messages>> = { "zh-TW": MESSAGES_ZH_TW, en: MESSAGES_EN }
 
@@ -4145,7 +4297,7 @@ export {
   rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, practiceChordsOfProgression,
   parsePrefs, parseHub, parseDrill, parseRhythm, assertNever, unwrapOr, ok, err, prefsRepository, hubRepository,
   TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE,
-  cellHeightFor, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav,
+  synth, RhythmStudio, SCALES, promptOf, expectedOf, expectedText, rangeLabel, cellHeightFor, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav,
   STRUM_TEMPLATES, PICK_TEMPLATES, parseStrum, hintForNotation, notationLegend,
   pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, PALETTE_MESSAGE,
   effectiveBass, keyTitleOf, finderViewOf, stepIndex, progressionSeconds, practiceDeckOf, DEFAULT_HUB,

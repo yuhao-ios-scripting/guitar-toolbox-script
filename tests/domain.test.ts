@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav, STRUM_TEMPLATES, PICK_TEMPLATES, parseStrum, hintForNotation, notationLegend, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, rhythmPlaySection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, synth, RhythmStudio, SCALES, promptOf, expectedOf, expectedText, rangeLabel, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav, STRUM_TEMPLATES, PICK_TEMPLATES, parseStrum, hintForNotation, notationLegend, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, rhythmPlaySection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_MESSAGE, QUALITY_FORMULA, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -494,5 +494,97 @@ describe("節奏頁：小節選項與循環播放", () => {
   it("指法標示：英文說明也能換成 T123 寫法", () => {
     expect(hintForNotation(te("rhythm.pick.arp8.hint"), "t123")).toContain("T-1-2-3-2-1-2-3")
     expect(notationLegend("pima", te)).toContain("thumb p")
+  })
+})
+
+describe("節奏頁的區塊順序", () => {
+  type Keyed = { props: { key: string } }
+  const keysOf = (soundOn: boolean, size: [number, number]) => {
+    const el = RhythmStudio({
+      prefs: { ...DEFAULT_PREFS, soundOn }, active: true, layout: computeLayout(...size), t: tz,
+    }) as unknown as { props: { single: Keyed[]; left: Keyed[]; right: Keyed[] } }
+    const k = (xs: Keyed[]) => xs.map((e) => e.props.key)
+    return { single: k(el.props.single), left: k(el.props.left), right: k(el.props.right) }
+  }
+  it("單欄：節奏型態、節奏圖、播放、選擇和弦、指法", () => {
+    expect(keysOf(true, [390, 844]).single).toEqual(["type", "grid", "play", "pick", "voicings"])
+  })
+  it("關閉聲音時沒有播放區，其餘順序不變", () => {
+    expect(keysOf(false, [390, 844]).single).toEqual(["type", "grid", "pick", "voicings"])
+  })
+  it("iPad 雙欄：左欄節奏型態與播放，右欄節奏圖與和弦", () => {
+    const k = keysOf(true, [1180, 820])
+    expect(k.left).toEqual(["type", "play"])
+    expect(k.right).toEqual(["grid", "pick", "voicings"])
+  })
+})
+
+describe("音階分頁文案", () => {
+  it("每個音階都有中英文名稱", () => {
+    SCALES.forEach((sc) => {
+      expect(tz(sc.labelKey)).not.toBe("")
+      expect(te(sc.labelKey)).not.toBe(tz(sc.labelKey))
+    })
+    expect(te(SCALES[0].labelKey)).toBe("Major scale (Ionian)")
+  })
+  it("認音練習的題目與正確答案（中英文）", () => {
+    const nm = noteName(false)
+    const find = { mode: "findNote", position: { string: 2, fret: 5 }, answer: 5 } as never
+    const name = { mode: "nameNote", position: { string: 3, fret: 2 }, answer: 9 } as never
+    expect(promptOf(name, nm, tz)).toBe("第 3 弦第 2 格是什麼音？")
+    expect(promptOf(name, nm, te)).toBe("What note is on string 3, fret 2?")
+    expect(expectedText(expectedOf(find), tz)).toBe("第 5 格")
+    expect(expectedText(expectedOf(find), te)).toBe("fret 5")
+    expect(expectedText(expectedOf(name), te)).toBe("A")
+  })
+  it("把位範圍文字", () => {
+    expect(rangeLabel({ from: 2, to: 6 }, tz)).toBe("第 2–6 格")
+    expect(rangeLabel({ from: 2, to: 6 }, te)).toBe("frets 2–6")
+  })
+})
+
+describe("播放同步：游標以聲音真正開始的時刻為起點", () => {
+  type FakePlayer = {
+    onReadyToPlay?: () => void
+    onTimeControlStatusChanged?: (s: unknown) => void
+    numberOfLoops: number
+    played: number
+  }
+  const players = (globalThis as unknown as { __fakePlayers: FakePlayer[] }).__fakePlayers
+  const events = [{ midi: 60, at: 0, dur: 0.2 }]
+
+  it("onStart 只在播放器回報 playing 時觸發一次，且不早於 play()", async () => {
+    players.length = 0
+    const started: number[] = []
+    await synth.playEvents(events, undefined, (t) => started.push(t))
+    const p = players[players.length - 1]
+    expect(started).toEqual([]) // 還在渲染／載入，聲音尚未開始
+    p.onReadyToPlay?.()
+    expect(p.played).toBe(1)
+    p.onTimeControlStatusChanged?.("waitingToPlayAtSpecifiedRate")
+    expect(started).toEqual([])
+    const before = Date.now()
+    p.onTimeControlStatusChanged?.("playing")
+    p.onTimeControlStatusChanged?.("playing")
+    expect(started).toHaveLength(1)
+    expect(started[0]).toBeGreaterThanOrEqual(before)
+    synth.stop()
+  })
+  it("備援：播放器沒有回報狀態時，play() 後仍會通知開始", async () => {
+    players.length = 0
+    const started: number[] = []
+    await synth.playEvents(events, undefined, (t) => started.push(t))
+    players[players.length - 1].onReadyToPlay?.()
+    await new Promise((r) => setTimeout(r, 700))
+    expect(started).toHaveLength(1)
+    synth.stop()
+  })
+  it("循環播放設定 numberOfLoops = -1，一般播放不設定", async () => {
+    players.length = 0
+    await synth.playEvents(events, 2)
+    expect(players[players.length - 1].numberOfLoops).toBe(-1)
+    await synth.playEvents(events)
+    expect(players[players.length - 1].numberOfLoops).toBe(0)
+    synth.stop()
   })
 })
