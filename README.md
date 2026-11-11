@@ -75,13 +75,13 @@ UI              Scripting 元件，只負責把狀態畫出來
 
 在已安裝 [**Scripting**](https://scriptingapp.github.io/) app 的 iPhone 或 iPad 上，用 Safari 開啟下方連結，依畫面指示開啟 Scripting 並確認匯入：
 
-[匯入吉他工具箱](https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2Fyuhao-ios-scripting%2Fguitar-toolbox-script%2Ftree%2Fmain%2FGuitarToolbox%22%5D)
+[匯入吉他工具箱](https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2Fyuhao-ios-scripting%2Fguitar-toolbox-script%2Freleases%2Flatest%2Fdownload%2FGuitarToolbox.zip%22%5D)
 
-連結內容是本專案 `GuitarToolbox/` 資料夾的 GitHub 網址（`https://github.com/yuhao-ios-scripting/guitar-toolbox-script/tree/main/GuitarToolbox`）。若瀏覽器沒有自動開啟 Scripting，請點頁面上的「Try Again」；也可以在 `scripting.fun/import_scripts` 貼上網址自行產生連結。
+連結指向最新 release 的 ZIP：`https://github.com/yuhao-ios-scripting/guitar-toolbox-script/releases/latest/download/GuitarToolbox.zip`。若瀏覽器沒有自動開啟 Scripting，請點頁面上的「Try Again」；也可以在 `scripting.fun/import_scripts` 貼上網址自行產生連結。
 
-> 連結需要本專案已推送到 GitHub 的 `main` 分支才有效。
+**為什麼用 ZIP**：直接匯入 GitHub 資料夾時，Scripting 會呼叫 GitHub 的 API，未登入的請求每小時有上限，超過會出現「github requests are limited」而下載失敗。下載 release 的 ZIP 不受此限制。
 
-**更新**：在 Scripting app 的腳本設定把來源設為同一個 GitHub 網址，並可設定自動檢查更新的間隔（最短 30 分鐘）。每次發佈前須遞增 `GuitarToolbox/script.json` 的 `version`。
+**更新**：在 Scripting app 的腳本設定把來源設為上面的 ZIP 網址（網址固定指向最新版），並可設定自動檢查更新的間隔（最短 30 分鐘）。
 
 ## 專案結構｜Layout
 

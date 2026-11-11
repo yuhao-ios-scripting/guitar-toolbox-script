@@ -8,9 +8,9 @@
 
 分支：main
 
-目前工作：A-013 等待下一個請求。
+目前工作：A-014 等待下一個請求。
 
-已驗證：A-012 app 移入 GuitarToolbox/ 並新增 script.json，版本 0.0.3（npm run typecheck 零錯誤；尚未在實機匯入驗證，尚未推送）。
+已驗證：A-013 已推送並建立 release v0.0.3（ZIP 下載內容與本機一致；尚未在實機匯入驗證）。
 
 下一步：等待請求。
 
@@ -253,3 +253,33 @@
 ---
 
 # → 提問 / A-013
+
++ godev github push
+
++ godev 下載失敗 github requests are limited. Try again after 01:35:49
+
++ godev 打包 ZIP 並建立 release
+
+# → 回覆 / A-013
+
+* _2026-11-12 01:15:00 +0800_
+
+1. `godev github push`
+
+   已推送 `main`（`f2ad134..e345a4a`）。
+
+2. `godev 下載失敗 github requests are limited. Try again after 01:35:49`
+
+   原因是未登入的 GitHub API 每小時請求上限，與專案無關。建議等限制解除、換網路，或改用 ZIP。
+
+3. `godev 打包 ZIP 並建立 release`
+
+   已建立 release `v0.0.3`（目標 commit `e345a4a`），資產 `GuitarToolbox.zip`（`script.json` 與 `index.tsx` 在根層）。下載網址 `https://github.com/yuhao-ios-scripting/guitar-toolbox-script/releases/latest/download/GuitarToolbox.zip` 已驗證內容與本機一致。README 匯入連結與 AGENTS.md 發佈步驟已改為 ZIP；這兩份文件的修改尚未 commit。
+
+## 問題（批次提出，各附建議預設值）
+
+- None.
+
+---
+
+# → 提問 / A-014

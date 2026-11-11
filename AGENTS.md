@@ -294,7 +294,13 @@ scripts/src/
 
 ## 9. 發佈
 
-- 發佈方式為 GitHub 匯入連結，做法見 [README.md](README.md#安裝install)。官方文件沒有商店或審核流程。
+- 發佈方式為 GitHub release 的 ZIP 加匯入連結，做法見 [README.md](README.md#安裝install)。官方文件沒有商店或審核流程。
+- 不要用 GitHub 資料夾網址當匯入來源：未登入的 GitHub API 每小時有上限，使用者會看到「github requests are limited」。
+- 發佈新版的步驟（推送與建立 release 皆需擁有者同意）：
+  1. 依第 8 章調整版本號碼並 commit、推送。
+  2. 在 `GuitarToolbox/` 內打包：`zip -X -r GuitarToolbox.zip script.json index.tsx`（`script.json` 與 `index.tsx` 放在 ZIP 根層，不含 `.DS_Store`）。
+  3. `gh release create v<版本> GuitarToolbox.zip --target <commit>`；資產檔名固定為 `GuitarToolbox.zip`，README 的 `releases/latest/download/GuitarToolbox.zip` 才會永遠指向最新版。
+  4. 下載該網址，確認內容與本機 ZIP 一致。
 - 被匯入的資料夾必須含 `script.json` 與 `index.tsx`。`script.json` 欄位（`name`、`description`、`version`、`icon`、`color`）參考擁有者另一個已可匯入的專案；文件未載明完整格式，**不要自行新增未確認的欄位**。`remoteResource` 的雜湊由 app 維護，不要手寫。
 - 發佈前須在實機確認：匯入成功、啟動正常；若使用者開啟「每個腳本單獨授權」，`FileManager` 暫存檔與音訊播放是否需要 `fileSystem` 權限（官方文件未載明）。
 - 推送、建立 release 或變更遠端設定需擁有者同意。
