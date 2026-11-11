@@ -26,7 +26,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4] // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.2.1"
+const APP_VERSION = "0.2.2"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -505,24 +505,21 @@ const resolveFingering = (frets: readonly Fret[]): { fingers: number[]; barre?: 
 /* ════════════════════════════════════════════════
  * 共用：和弦資料庫（和弦速查、和弦練習、和弦進行共用）
  * ════════════════════════════════════════════════ */
-type FinderQuality = {
-  key: string; label: string; intervals: number[]; suffix: string
-  formula: string // 和弦公式（以大調音階的音級表示）
-}
+type FinderQuality = { key: string; intervals: number[]; suffix: string }
 
 const FINDER_QUALITIES: FinderQuality[] = [
-  { key: "maj", label: "大三和弦 (maj)", intervals: [0, 4, 7], suffix: "", formula: "1  3  5" },
-  { key: "min", label: "小三和弦 (m)", intervals: [0, 3, 7], suffix: "m", formula: "1  ♭3  5" },
-  { key: "7", label: "屬七和弦 (7)", intervals: [0, 4, 7, 10], suffix: "7", formula: "1  3  5  ♭7" },
-  { key: "maj7", label: "大七和弦 (maj7)", intervals: [0, 4, 7, 11], suffix: "maj7", formula: "1  3  5  7" },
-  { key: "m7", label: "小七和弦 (m7)", intervals: [0, 3, 7, 10], suffix: "m7", formula: "1  ♭3  5  ♭7" },
-  { key: "sus2", label: "掛留二和弦 (sus2)", intervals: [0, 2, 7], suffix: "sus2", formula: "1  2  5" },
-  { key: "sus4", label: "掛留四和弦 (sus4)", intervals: [0, 5, 7], suffix: "sus4", formula: "1  4  5" },
-  { key: "add9", label: "加九和弦 (add9)", intervals: [0, 4, 7, 14], suffix: "add9", formula: "1  3  5  9" },
-  { key: "m7b5", label: "半減七和弦 (m7♭5)", intervals: [0, 3, 6, 10], suffix: "m7♭5", formula: "1  ♭3  ♭5  ♭7" },
+  { key: "maj", intervals: [0, 4, 7], suffix: "" },
+  { key: "min", intervals: [0, 3, 7], suffix: "m" },
+  { key: "7", intervals: [0, 4, 7, 10], suffix: "7" },
+  { key: "maj7", intervals: [0, 4, 7, 11], suffix: "maj7" },
+  { key: "m7", intervals: [0, 3, 7, 10], suffix: "m7" },
+  { key: "sus2", intervals: [0, 2, 7], suffix: "sus2" },
+  { key: "sus4", intervals: [0, 5, 7], suffix: "sus4" },
+  { key: "add9", intervals: [0, 4, 7, 14], suffix: "add9" },
+  { key: "m7b5", intervals: [0, 3, 6, 10], suffix: "m7♭5" },
 
-  { key: "dim", label: "減三和弦 (dim)", intervals: [0, 3, 6], suffix: "dim", formula: "1  ♭3  ♭5" },
-  { key: "aug", label: "增三和弦 (aug)", intervals: [0, 4, 8], suffix: "aug", formula: "1  3  ♯5" },
+  { key: "dim", intervals: [0, 3, 6], suffix: "dim" },
+  { key: "aug", intervals: [0, 4, 8], suffix: "aug" },
 ]
 const qualityDef = (key: string): FinderQuality =>
   FINDER_QUALITIES.find((q) => q.key === key) ?? FINDER_QUALITIES[0]
@@ -579,8 +576,15 @@ const MOVABLE_SHAPES: readonly MovableShape[] = [
 ]
 
 type VoicingKind = "open" | "barre"
-// shape：封閉和弦所屬指型（E／A／D／C／G）；開放和弦沒有
-type FinderVoicing = { title: string; kind: VoicingKind; frets: Fret[]; shape?: string } // null 不彈，0 空弦
+// 按法的來源：開放和弦表，或可移動指型（E／A／D／C／G）移到第 fret 格；中文名稱由 UI 的 voicingTitle 產生
+type VoicingOrigin =
+  | { readonly type: "open" }
+  | { readonly type: "shape"; readonly shape: string; readonly fret: number; readonly variant: boolean }
+// rebassed：為了指定低音（斜線和弦）而換過低音
+type FinderVoicing = {
+  readonly origin: VoicingOrigin; readonly rebassed: boolean
+  readonly kind: VoicingKind; readonly frets: Fret[] // null 不彈，0 空弦
+}
 
 const parseOpen = (s: string): Fret[] =>
   s.split("").map(c => (c === "x" ? null : parseInt(c, 10)))
@@ -588,26 +592,25 @@ const parseOpen = (s: string): Fret[] =>
 function buildVoicings(root: number, q: string): FinderVoicing[] {
   const list: FinderVoicing[] = []
   const seen = new Set<string>()
-  const add = (title: string, kind: VoicingKind, frets: Fret[], shape?: string) => {
+  const add = (origin: VoicingOrigin, kind: VoicingKind, frets: Fret[]) => {
     const k = frets.join(",")
     if (seen.has(k)) return
     if (Math.max(...frets.filter((f): f is number => f !== null)) > 15) return
     seen.add(k)
-    list.push({ title, kind, frets, shape })
+    list.push({ origin, rebassed: false, kind, frets })
   }
 
   const open = OPEN[`${root}-${q}`]
-  if (open) add("開放和弦", "open", parseOpen(open))
+  if (open) add({ type: "open" }, "open", parseOpen(open))
 
   MOVABLE_SHAPES.forEach((shape) => {
     const forms = shape.forms[q]
     if (!forms) return
     const f = mod12(root - OPEN_STRINGS[shape.rootString] - shape.rootOffset)
     forms.forEach((offsets, i) => {
-      const label = i === 0 ? "" : "・變化"
-      add(f === 0 ? `${shape.name} 型${label}` : `${shape.name} 型封閉（第 ${f} 格）${label}`,
+      add({ type: "shape", shape: shape.name, fret: f, variant: i > 0 },
         f === 0 ? "open" : "barre",
-        offsets.map((o) => (o < 0 ? null : o + f)), shape.name)
+        offsets.map((o) => (o < 0 ? null : o + f)))
     })
   })
   return list
@@ -633,18 +636,18 @@ const buildSlashVoicings = (root: PitchClass, q: string, bass: PitchClass): Find
   const need = [def.intervals[0], def.intervals[1]].map((i) => mod12(root + i))
   const out: FinderVoicing[] = []
   const seen = new Set<string>()
-  const push = (title: string, frets: Fret[], shape?: string) => {
+  const push = (origin: VoicingOrigin, rebassed: boolean, frets: Fret[]) => {
     const k = frets.join(",")
     if (seen.has(k)) return
     seen.add(k)
     const kind: VoicingKind = frets.some((f) => f === 0) ? "open" : "barre"
-    out.push({ title, kind, frets, shape })
+    out.push({ origin, rebassed, kind, frets })
   }
 
   getVoicings(root, q).forEach((v) => {
     const lowest = v.frets.findIndex((f) => f !== null)
     if (lowest >= 0 && mod12(OPEN_STRINGS[lowest] + (v.frets[lowest] as number)) === bass) {
-      push(v.title, v.frets, v.shape)
+      push(v.origin, v.rebassed, v.frets)
       return
     }
     const fretted = v.frets.filter((f): f is number => f !== null && f > 0)
@@ -669,7 +672,7 @@ const buildSlashVoicings = (root: PitchClass, q: string, bass: PitchClass): Find
     }
     if (best) {
       const same = best.frets.join(",") === v.frets.join(",")
-      push(same ? v.title : `${v.title}・換低音`, best.frets, v.shape)
+      push(v.origin, v.rebassed || !same, best.frets)
     }
   })
   return out
@@ -1098,7 +1101,8 @@ const practiceChordName = (flats: boolean) => (c: PracticeChord): string =>
 
 interface TrainerVoicing {
   readonly chord: PracticeChord
-  readonly title: string
+  readonly origin: VoicingOrigin
+  readonly rebassed: boolean
   readonly kind: VoicingKind
   readonly frets: readonly Fret[]
 }
@@ -1114,7 +1118,7 @@ const scopeAllows = (scope: Scope, kind: VoicingKind): boolean => scope === "bot
 // bass：指定低音（on）；-1 或與根音相同時視為一般和弦
 // 開放和弦不受指型選項影響；封閉和弦只留下設定中啟用的指型
 const shapeAllows = (shapes: readonly string[], v: FinderVoicing): boolean =>
-  v.kind === "open" || v.shape === undefined || shapes.includes(v.shape)
+  v.kind === "open" || v.origin.type !== "shape" || shapes.includes(v.origin.shape)
 const voicingsInScope = (
   root: PitchClass, quality: string, scope: Scope, shapes: readonly string[], bass: number = -1,
 ): FinderVoicing[] => {
@@ -1132,7 +1136,7 @@ const deckFromChords = (
 ): Deck => {
   const entries = chords.map((chord) => {
     const vs = voicingsInScope(chord.root, chord.quality, scope, shapes)
-      .map((v): TrainerVoicing => ({ chord, title: v.title, kind: v.kind, frets: v.frets }))
+      .map((v): TrainerVoicing => ({ chord, origin: v.origin, rebassed: v.rebassed, kind: v.kind, frets: v.frets }))
     return { chord, vs }
   })
   return {
@@ -1154,7 +1158,32 @@ const buildDeck = (
   return deckFromChords(chords, scope, shapes)
 }
 
-const describe = (v: TrainerVoicing): string => `第 ${v.chord.degree + 1} 級　${v.title}`
+/* ── 文案：和弦類型與按法的中文名稱（UI 專用，domain 只留結構資料） ── */
+const QUALITY_TEXT: Record<string, { readonly label: string; readonly formula: string }> = {
+  maj: { label: "大三和弦 (maj)", formula: "1  3  5" },
+  min: { label: "小三和弦 (m)", formula: "1  ♭3  5" },
+  "7": { label: "屬七和弦 (7)", formula: "1  3  5  ♭7" },
+  maj7: { label: "大七和弦 (maj7)", formula: "1  3  5  7" },
+  m7: { label: "小七和弦 (m7)", formula: "1  ♭3  5  ♭7" },
+  sus2: { label: "掛留二和弦 (sus2)", formula: "1  2  5" },
+  sus4: { label: "掛留四和弦 (sus4)", formula: "1  4  5" },
+  add9: { label: "加九和弦 (add9)", formula: "1  3  5  9" },
+  m7b5: { label: "半減七和弦 (m7♭5)", formula: "1  ♭3  ♭5  ♭7" },
+  dim: { label: "減三和弦 (dim)", formula: "1  ♭3  ♭5" },
+  aug: { label: "增三和弦 (aug)", formula: "1  3  ♯5" },
+}
+const qualityLabel = (key: string): string => QUALITY_TEXT[key]?.label ?? key
+const qualityFormula = (key: string): string => QUALITY_TEXT[key]?.formula ?? ""
+
+const voicingTitle = (v: { readonly origin: VoicingOrigin; readonly rebassed: boolean }): string => {
+  const o = v.origin
+  const base = o.type === "open"
+    ? "開放和弦"
+    : `${o.shape} 型${o.fret === 0 ? "" : `封閉（第 ${o.fret} 格）`}${o.variant ? "・變化" : ""}`
+  return v.rebassed ? `${base}・換低音` : base
+}
+
+const describe = (v: TrainerVoicing): string => `第 ${v.chord.degree + 1} 級　${voicingTitle(v)}`
 
 /* ① 練習進度 */
 interface PracticeSession { readonly seed: number; readonly index: number }
@@ -1330,7 +1359,7 @@ function chordDetailRows(p: {
 
   const rows: JSX.Element[] = [
     <VStack key="head" alignment="leading" spacing={4}>
-      <Text font="headline">{`${q.label}${bass >= 0 ? `　/${nm(bass)}` : ""}　${q.formula}`}</Text>
+      <Text font="headline">{`${qualityLabel(q.key)}${bass >= 0 ? `　/${nm(bass)}` : ""}　${qualityFormula(q.key)}`}</Text>
       <Text font="subheadline" foregroundStyle="secondaryLabel">
         {`組成音：${notes}${bass >= 0 ? `　指定低音：${nm(bass)}` : ""}`}
       </Text>
@@ -1349,7 +1378,7 @@ function chordDetailRows(p: {
   voicings.forEach((v, i) => {
     rows.push(
       <VStack key={`v${i}`} alignment="leading" spacing={6}>
-        <Text font="headline">{v.title}</Text>
+        <Text font="headline">{voicingTitle(v)}</Text>
         <ChordBoard spec={{ frets: v.frets, root }} prefs={prefs} nm={nm} width={width} />
         {prefs.soundOn ? <ChordPlayButtons frets={v.frets} prefs={prefs} /> : null}
       </VStack>,
@@ -1508,7 +1537,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
         </Picker>
         <Picker title="類型" value={s.finderQuality} pickerStyle="menu"
           onChanged={(v: string) => { patch({ finderQuality: v }); auditionFinder(finderRoot, v, finderBass) }}>
-          {FINDER_QUALITIES.map((x) => <Text key={x.key} tag={x.key}>{x.label}</Text>)}
+          {FINDER_QUALITIES.map((x) => <Text key={x.key} tag={x.key}>{qualityLabel(x.key)}</Text>)}
         </Picker>
         <Picker title="指定低音" value={s.finderBass} pickerStyle="menu"
           onChanged={(v: number) => {
@@ -1583,7 +1612,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
     if (sel && sel.voicing) {
       out.push(
         R(
-          <Section key="detail" header={<Text>{`${sel.numeral}　${sel.name}・${sel.voicing.title}`}</Text>}>
+          <Section key="detail" header={<Text>{`${sel.numeral}　${sel.name}・${voicingTitle(sel.voicing)}`}</Text>}>
             {chordDetailRows({
               root: sel.root, quality: sel.quality, flats: keyFlats, prefs, scope: s.scope,
               only: sel.voicing, width: bw,
@@ -1691,7 +1720,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
                 action={() => patch({ qualities: [] })} />
             </HStack>
             {FINDER_QUALITIES.map((q) => (
-              <Toggle key={q.key} title={q.label}
+              <Toggle key={q.key} title={qualityLabel(q.key)}
                 value={s.qualities.includes(q.key)}
                 onChanged={() => patch({ qualities: toggleIn(s.qualities, q.key) })} />
             ))}
@@ -3079,7 +3108,7 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
       <Text font="subheadline" foregroundStyle="secondaryLabel">{gridHint}</Text>
     </Section>,
 
-    <Section key="chord" header={<Text>{`${shown.numeral}　${shown.name}${shown.voicing ? `・${shown.voicing.title}` : ""}`}</Text>}>
+    <Section key="chord" header={<Text>{`${shown.numeral}　${shown.name}${shown.voicing ? `・${voicingTitle(shown.voicing)}` : ""}`}</Text>}>
       {shown.voicing ? (
         <HStack>
           <Spacer />
@@ -3311,6 +3340,6 @@ run()
 export {
   mod12, noteName, prefersFlats, shuffled, nextRandom, computeLayout,
   OPEN_STRINGS, FINDER_QUALITIES, qualityDef, MOVABLE_SHAPES, OPEN,
-  getVoicings, getSlashVoicings, voicingsInScope, resolveFingering,
+  getVoicings, getSlashVoicings, voicingsInScope, voicingTitle, qualityLabel, QUALITY_TEXT, resolveFingering,
   diatonicChords, resolveProgression, MAJOR_PROGS,
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, diatonicChords,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
-  resolveProgression, shuffled, voicingsInScope,
+  resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
 
 type Frets = readonly (number | null)[]
@@ -43,7 +43,7 @@ describe("和弦組成", () => {
 describe("按法音高（表格化：每個根音 × 類型）", () => {
   ROOTS.forEach((root) => FINDER_QUALITIES.forEach(({ key: q }) => {
     getVoicings(root, q).forEach((v) => {
-      it(`${noteName(false)(root)} ${q}「${v.title}」只含和弦音、最低音為根音、至多缺一音`, () => {
+      it(`${noteName(false)(root)} ${q}「${voicingTitle(v)}」只含和弦音、最低音為根音、至多缺一音`, () => {
         const tones = chordTones(root, q)
         const pcs = pitchClasses(v.frets)
         expect(pcs.every((p) => tones.includes(p))).toBe(true)
@@ -62,20 +62,20 @@ describe("按法音高（表格化：每個根音 × 類型）", () => {
     })
   })
   it("F 大三和弦的 E 型封閉為 1 3 3 2 1 1", () => {
-    const f = getVoicings(5, "maj").find((v) => v.title.startsWith("E 型封閉"))
+    const f = getVoicings(5, "maj").find((v) => v.origin.type === "shape" && v.origin.shape === "E" && v.origin.fret === 1)
     expect(f?.frets).toEqual([1, 3, 3, 2, 1, 1])
   })
   it("指型名稱都在 MOVABLE_SHAPES 中", () => {
     const names = MOVABLE_SHAPES.map((m) => m.name)
     ROOTS.forEach((r) => FINDER_QUALITIES.forEach((q) =>
-      getVoicings(r, q.key).forEach((v) => v.shape && expect(names).toContain(v.shape))))
+      getVoicings(r, q.key).forEach((v) => v.origin.type === "shape" && expect(names).toContain(v.origin.shape))))
   })
 })
 
 describe("指型篩選", () => {
   it("只啟用 E 型時，封閉和弦都屬於 E 型，開放和弦保留", () => {
     const vs = voicingsInScope(5, "maj", "both", ["E"])
-    expect(vs.filter((v) => v.kind === "barre").every((v) => v.shape === "E")).toBe(true)
+    expect(vs.filter((v) => v.kind === "barre").every((v) => v.origin.type === "shape" && v.origin.shape === "E")).toBe(true)
     expect(voicingsInScope(0, "maj", "both", []).some((v) => v.kind === "open")).toBe(true)
   })
   it("沒啟用任何指型時沒有封閉和弦", () => {
@@ -106,7 +106,7 @@ describe("指法推算", () => {
     ROOTS.forEach((r) => FINDER_QUALITIES.forEach((q) => getVoicings(r, q.key).forEach((v) => {
       const { fingers } = resolveFingering(v.frets)
       fingers.forEach((n) => { expect(n).toBeGreaterThanOrEqual(0); expect(n).toBeLessThanOrEqual(4) })
-      v.frets.forEach((f, i) => { if (f !== null && f > 0) expect(fingers[i], v.title).toBeGreaterThan(0) })
+      v.frets.forEach((f, i) => { if (f !== null && f > 0) expect(fingers[i], voicingTitle(v)).toBeGreaterThan(0) })
     })))
   })
 })
@@ -132,5 +132,21 @@ describe("亂數與版面", () => {
   it("短邊 ≥ 600pt 且橫向時為 iPad 雙欄", () => {
     expect(computeLayout(1180, 820).split).toBe(true)
     expect(computeLayout(390, 844).pad).toBe(false)
+  })
+})
+
+describe("文案（UI 層）", () => {
+  it("每個和弦類型都有名稱與公式", () => {
+    FINDER_QUALITIES.forEach((q) => {
+      expect(QUALITY_TEXT[q.key], q.key).toBeDefined()
+      expect(qualityLabel(q.key)).not.toBe(q.key)
+    })
+  })
+  it("按法名稱：開放、E 型、封閉、變化、換低音", () => {
+    expect(voicingTitle({ origin: { type: "open" }, rebassed: false })).toBe("開放和弦")
+    const shape = (fret: number, variant: boolean) =>
+      ({ type: "shape", shape: "E", fret, variant }) as const
+    expect(voicingTitle({ origin: shape(0, false), rebassed: false })).toBe("E 型")
+    expect(voicingTitle({ origin: shape(3, true), rebassed: true })).toBe("E 型封閉（第 3 格）・變化・換低音")
   })
 })
