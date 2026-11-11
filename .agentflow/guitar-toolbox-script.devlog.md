@@ -398,3 +398,26 @@
 
 # → 提問 / A-019
 
++ godev 採用建議，先做 B-002 再做 B-001
+
+# → 回覆 / A-019
+
+* _2026-11-12 +0800_
+
+1. `godev 採用建議，先做 B-002 再做 B-001`
+
+   B-002（0.2.2，commit `refactor: 和弦類型與按法的中文文案移出 domain`）：`FINDER_QUALITIES` 只剩 `key`、`intervals`、`suffix`；中文名稱與公式移到 UI 的 `QUALITY_TEXT`。`FinderVoicing.title` 改為結構化的 `origin`（開放／指型＋格數＋是否變化）與 `rebassed`，中文標題由 UI 的 `voicingTitle` 產生；`TrainerVoicing` 同步改用 `origin`。
+
+   B-001（0.2.3）：新增唯一來源 `QUALITY_KEYS` 與聯集型別 `QualityKey`，`ChordQuality` 改為其子集，全程式 `quality: string` 都換成 `QualityKey`，`isQualityKey` 作為型別守衛（讀取舊設定時使用）；`PitchClass` 改為 branded type，只能由 `mod12` 建立，編譯器因此抓出約 50 處未驗證的 `number` 並已逐一修正。`noteName` 與 `noteLabel` 維持接受 `number`（內部折回 0–11）。`Fret`（`number | null`）尚未 brand：陣列字面值遍布各處，改動面大、收益低，保留在 backlog B-001。
+
+   `npm run typecheck` 零錯誤，`npm test` 487 個案例通過（新增文案與型別對應測試）。尚未推送，未實機檢視。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-019-1：下一步做哪一項？建議預設：B-003（Storage 與 reducer 歸位、拆小 `ChordHub`／`RhythmStudio`），之後 B-004、B-005。
+  - ans:
+
+---
+
+# → 提問 / A-020
+

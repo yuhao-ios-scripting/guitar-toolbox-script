@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
+import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, diatonicChords,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, diatonicChords, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -10,7 +11,7 @@ const ROOTS = Array.from({ length: 12 }, (_, i) => i)
 const pitchClasses = (frets: Frets): number[] =>
   frets.flatMap((f, i) => (f === null ? [] : [mod12(OPEN_STRINGS[i] + f)]))
 const lowestPc = (frets: Frets): number => pitchClasses(frets)[0]
-const chordTones = (root: number, q: string): number[] =>
+const chordTones = (root: number, q: QualityKey): number[] =>
   qualityDef(q).intervals.map((i) => mod12(root + i))
 
 describe("音高", () => {
@@ -22,20 +23,20 @@ describe("音高", () => {
     expect(noteName(true)(1)).toBe("Db")
   })
   it("F 大調偏好降記號、G 大調偏好升記號", () => {
-    expect(prefersFlats({ tonic: 5, mode: "major" })).toBe(true)
-    expect(prefersFlats({ tonic: 7, mode: "major" })).toBe(false)
+    expect(prefersFlats({ tonic: mod12(5), mode: "major" })).toBe(true)
+    expect(prefersFlats({ tonic: mod12(7), mode: "major" })).toBe(false)
   })
 })
 
 describe("和弦組成", () => {
-  const names = (root: number, q: string) => chordTones(root, q).map(noteName(false))
+  const names = (root: number, q: QualityKey) => chordTones(root, q).map(noteName(false))
   it("Cmaj7 = C E G B", () => expect(names(0, "maj7")).toEqual(["C", "E", "G", "B"]))
   it("Am7♭5 = A C E♭ G", () => {
     expect(chordTones(9, "m7b5")).toEqual([9, 0, 3, 7])
   })
   it("G7 = G B D F", () => expect(names(7, "7")).toEqual(["G", "B", "D", "F"]))
   it("C 大調順階和弦：C Dm Em F G Am Bdim", () => {
-    const qs = diatonicChords({ tonic: 0, mode: "major" }).map((c) => `${c.root}${c.quality}`)
+    const qs = diatonicChords({ tonic: mod12(0), mode: "major" }).map((c) => `${c.root}${c.quality}`)
     expect(qs).toEqual(["0maj", "2min", "4min", "5maj", "7maj", "9min", "11dim"])
   })
 })
@@ -56,6 +57,7 @@ describe("按法音高（表格化：每個根音 × 類型）", () => {
   it("開放和弦表的每一筆都只含和弦音", () => {
     Object.entries(OPEN).forEach(([k, shape]) => {
       const [root, q] = [Number(k.split("-")[0]), k.split("-").slice(1).join("-")]
+      if (!isQualityKey(q)) throw new Error(`未知的和弦類型：${k}`)
       const frets = shape.split("").map((c) => (c === "x" ? null : Number(c)))
       const tones = chordTones(root, q)
       expect(pitchClasses(frets).every((p) => tones.includes(p)), k).toBe(true)
@@ -74,18 +76,18 @@ describe("按法音高（表格化：每個根音 × 類型）", () => {
 
 describe("指型篩選", () => {
   it("只啟用 E 型時，封閉和弦都屬於 E 型，開放和弦保留", () => {
-    const vs = voicingsInScope(5, "maj", "both", ["E"])
+    const vs = voicingsInScope(mod12(5), "maj", "both", ["E"])
     expect(vs.filter((v) => v.kind === "barre").every((v) => v.origin.type === "shape" && v.origin.shape === "E")).toBe(true)
-    expect(voicingsInScope(0, "maj", "both", []).some((v) => v.kind === "open")).toBe(true)
+    expect(voicingsInScope(mod12(0), "maj", "both", []).some((v) => v.kind === "open")).toBe(true)
   })
   it("沒啟用任何指型時沒有封閉和弦", () => {
-    expect(voicingsInScope(5, "maj", "barre", [])).toEqual([])
+    expect(voicingsInScope(mod12(5), "maj", "barre", [])).toEqual([])
   })
 })
 
 describe("斜線和弦", () => {
   it("C/G 的最低音為 G，且仍含根音與三音", () => {
-    const vs = getSlashVoicings(0, "maj", 7)
+    const vs = getSlashVoicings(mod12(0), "maj", mod12(7))
     expect(vs.length).toBeGreaterThan(0)
     vs.forEach((v) => {
       expect(lowestPc(v.frets)).toBe(7)
@@ -114,7 +116,7 @@ describe("指法推算", () => {
 describe("和弦進行", () => {
   it("每個和弦進行在 C 大調都解得出和弦", () => {
     MAJOR_PROGS.forEach((p) => {
-      const chords = resolveProgression({ tonic: 0, mode: "major" }, p, "open", false, ["E", "A", "D"])
+      const chords = resolveProgression({ tonic: mod12(0), mode: "major" }, p, "open", false, ["E", "A", "D"])
       expect(chords.length).toBe(p.steps.length)
       chords.forEach((c) => expect(c.voicing).not.toBeNull())
     })
@@ -136,6 +138,9 @@ describe("亂數與版面", () => {
 })
 
 describe("文案（UI 層）", () => {
+  it("QUALITY_KEYS 與和弦資料庫的類型一一對應", () => {
+    expect(FINDER_QUALITIES.map((q) => q.key)).toEqual([...QUALITY_KEYS])
+  })
   it("每個和弦類型都有名稱與公式", () => {
     FINDER_QUALITIES.forEach((q) => {
       expect(QUALITY_TEXT[q.key], q.key).toBeDefined()

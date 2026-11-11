@@ -16,17 +16,21 @@ import {
 /* ════════════════════════════════════════════════
  * 共用：音名、數學工具、亂數
  * ════════════════════════════════════════════════ */
-type PitchClass = number // 0–11，C = 0
+declare const pitchClassBrand: unique symbol
+type PitchClass = number & { readonly [pitchClassBrand]: true } // 0–11，C = 0
+
+// 唯一的 PitchClass 建構函式：任何整數都折回 0–11
+const mod12 = (n: number): PitchClass => (((n % 12) + 12) % 12) as PitchClass
 
 const SHARP_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 const FLAT_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
 const NOTE_LABELS = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"]
 const TONIC_LABELS = ["C", "C♯/D♭", "D", "D♯/E♭", "E", "F", "F♯/G♭", "G", "G♯/A♭", "A", "A♯/B♭", "B"]
-const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4] // 6→1 弦：E A D G B E
+const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => mod12(n))
+const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.2.2"
+const APP_VERSION = "0.2.3"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -99,13 +103,12 @@ function SplitList(props: {
   )
 }
 
-const mod12 = (n: number): PitchClass => ((n % 12) + 12) % 12
 const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i)
-const noteLabel = (pc: PitchClass): string => NOTE_LABELS[mod12(pc)]
+const noteLabel = (pc: number): string => NOTE_LABELS[mod12(pc)]
 
 // 兩個固定的取名函式：identity 穩定，才能放進 useMemo 的依賴
-const SHARP_NAMER = (pc: PitchClass): string => SHARP_NAMES[mod12(pc)]
-const FLAT_NAMER = (pc: PitchClass): string => FLAT_NAMES[mod12(pc)]
+const SHARP_NAMER = (pc: number): string => SHARP_NAMES[mod12(pc)]
+const FLAT_NAMER = (pc: number): string => FLAT_NAMES[mod12(pc)]
 const noteName = (flats: boolean) => (flats ? FLAT_NAMER : SHARP_NAMER)
 
 // 可重現的亂數：回傳 [0,1) 的值與下一個 seed（純函式）
@@ -140,7 +143,12 @@ const chunk = <T,>(xs: readonly T[], n: number): T[][] =>
  * 共用：和弦基礎型別
  * ════════════════════════════════════════════════ */
 type KeyMode = "major" | "minor"
-type ChordQuality = "maj" | "min" | "dim"
+// 和弦類型的唯一來源：速查、進行、練習都用同一組 key；順階和弦只會出現其中三種
+const QUALITY_KEYS = ["maj", "min", "7", "maj7", "m7", "sus2", "sus4", "add9", "m7b5", "dim", "aug"] as const
+type QualityKey = (typeof QUALITY_KEYS)[number]
+type ChordQuality = Extract<QualityKey, "maj" | "min" | "dim">
+const isQualityKey = (v: unknown): v is QualityKey =>
+  typeof v === "string" && (QUALITY_KEYS as readonly string[]).includes(v)
 type Fret = number | null // null = 悶音不彈
 interface Key { readonly tonic: PitchClass; readonly mode: KeyMode }
 interface Barre { readonly fret: number; readonly from: number; readonly to: number }
@@ -505,7 +513,7 @@ const resolveFingering = (frets: readonly Fret[]): { fingers: number[]; barre?: 
 /* ════════════════════════════════════════════════
  * 共用：和弦資料庫（和弦速查、和弦練習、和弦進行共用）
  * ════════════════════════════════════════════════ */
-type FinderQuality = { key: string; intervals: number[]; suffix: string }
+type FinderQuality = { key: QualityKey; intervals: number[]; suffix: string }
 
 const FINDER_QUALITIES: FinderQuality[] = [
   { key: "maj", intervals: [0, 4, 7], suffix: "" },
@@ -521,9 +529,8 @@ const FINDER_QUALITIES: FinderQuality[] = [
   { key: "dim", intervals: [0, 3, 6], suffix: "dim" },
   { key: "aug", intervals: [0, 4, 8], suffix: "aug" },
 ]
-const qualityDef = (key: string): FinderQuality =>
+const qualityDef = (key: QualityKey): FinderQuality =>
   FINDER_QUALITIES.find((q) => q.key === key) ?? FINDER_QUALITIES[0]
-const isValidQuality = (key: string): boolean => FINDER_QUALITIES.some((q) => q.key === key)
 
 // 開放和弦（6弦→1弦，x 代表不彈）
 const OPEN: Record<string, string> = {
@@ -545,7 +552,7 @@ type MovableShape = {
   readonly name: string
   readonly rootString: number
   readonly rootOffset: number
-  readonly forms: Record<string, readonly (readonly number[])[]>
+  readonly forms: Partial<Record<QualityKey, readonly (readonly number[])[]>>
 }
 const MOVABLE_SHAPES: readonly MovableShape[] = [
   { name: "E", rootString: 0, rootOffset: 0, forms: {
@@ -589,7 +596,7 @@ type FinderVoicing = {
 const parseOpen = (s: string): Fret[] =>
   s.split("").map(c => (c === "x" ? null : parseInt(c, 10)))
 
-function buildVoicings(root: number, q: string): FinderVoicing[] {
+function buildVoicings(root: number, q: QualityKey): FinderVoicing[] {
   const list: FinderVoicing[] = []
   const seen = new Set<string>()
   const add = (origin: VoicingOrigin, kind: VoicingKind, frets: Fret[]) => {
@@ -618,7 +625,7 @@ function buildVoicings(root: number, q: string): FinderVoicing[] {
 
 // 指法是純資料，依（根音, 類型）快取，避免每次渲染重算
 const voicingCache = new Map<string, FinderVoicing[]>()
-const getVoicings = (root: number, q: string): FinderVoicing[] => {
+const getVoicings = (root: number, q: QualityKey): FinderVoicing[] => {
   const k = `${root}-${q}`
   const hit = voicingCache.get(k)
   if (hit) return hit
@@ -631,7 +638,7 @@ const getVoicings = (root: number, q: string): FinderVoicing[] => {
  * 做法：以既有按法為基礎，把最低音換成指定的低音，
  * 並悶掉更低的弦；若剩下的音湊不出根音與三音、或手指跨度過大，就捨棄該按法。
  */
-const buildSlashVoicings = (root: PitchClass, q: string, bass: PitchClass): FinderVoicing[] => {
+const buildSlashVoicings = (root: PitchClass, q: QualityKey, bass: PitchClass): FinderVoicing[] => {
   const def = qualityDef(q)
   const need = [def.intervals[0], def.intervals[1]].map((i) => mod12(root + i))
   const out: FinderVoicing[] = []
@@ -679,7 +686,7 @@ const buildSlashVoicings = (root: PitchClass, q: string, bass: PitchClass): Find
 }
 
 const slashCache = new Map<string, FinderVoicing[]>()
-const getSlashVoicings = (root: PitchClass, q: string, bass: PitchClass): FinderVoicing[] => {
+const getSlashVoicings = (root: PitchClass, q: QualityKey, bass: PitchClass): FinderVoicing[] => {
   const k = `${root}-${q}-${bass}`
   const hit = slashCache.get(k)
   if (hit) return hit
@@ -1080,7 +1087,7 @@ const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII"]
 const QUALITY_SUFFIX: Record<ChordQuality, string> = { maj: "", min: "m", dim: "dim" }
 
 const ALL_DEGREES: readonly number[] = [0, 1, 2, 3, 4, 5, 6]
-const ALL_QUALITIES: readonly string[] = FINDER_QUALITIES.map((q) => q.key)
+const ALL_QUALITIES: readonly QualityKey[] = FINDER_QUALITIES.map((q) => q.key)
 const toggleIn = <T,>(xs: readonly T[], x: T): T[] =>
   xs.includes(x) ? xs.filter((v) => v !== x) : [...xs, x]
 
@@ -1095,7 +1102,7 @@ const romanNumeral = (c: Chord): string =>
   c.quality === "maj" ? ROMAN[c.degree] : ROMAN[c.degree].toLowerCase() + (c.quality === "dim" ? "°" : "")
 
 // 練習用和弦：根音來自所選級數，類型來自所選和弦類型（和弦速查的 key）
-interface PracticeChord { readonly root: PitchClass; readonly quality: string; readonly degree: number }
+interface PracticeChord { readonly root: PitchClass; readonly quality: QualityKey; readonly degree: number }
 const practiceChordName = (flats: boolean) => (c: PracticeChord): string =>
   noteName(flats)(c.root) + qualityDef(c.quality).suffix
 
@@ -1108,7 +1115,7 @@ interface TrainerVoicing {
 }
 
 // 和弦的所有組成音都在該調音階內，才算符合調性
-const chordFitsKey = (key: Key, root: PitchClass, quality: string): boolean => {
+const chordFitsKey = (key: Key, root: PitchClass, quality: QualityKey): boolean => {
   const steps = key.mode === "major" ? MAJOR_STEPS : MINOR_STEPS
   const scale = new Set(steps.map((s) => mod12(key.tonic + s)))
   return qualityDef(quality).intervals.every((i) => scale.has(mod12(root + i)))
@@ -1120,10 +1127,10 @@ const scopeAllows = (scope: Scope, kind: VoicingKind): boolean => scope === "bot
 const shapeAllows = (shapes: readonly string[], v: FinderVoicing): boolean =>
   v.kind === "open" || v.origin.type !== "shape" || shapes.includes(v.origin.shape)
 const voicingsInScope = (
-  root: PitchClass, quality: string, scope: Scope, shapes: readonly string[], bass: number = -1,
+  root: PitchClass, quality: QualityKey, scope: Scope, shapes: readonly string[], bass: number = -1,
 ): FinderVoicing[] => {
   const all = bass >= 0 && bass !== root
-    ? getSlashVoicings(root, quality, bass)
+    ? getSlashVoicings(root, quality, mod12(bass))
     : getVoicings(root, quality)
   return all.filter((v) => scopeAllows(scope, v.kind) && shapeAllows(shapes, v))
 }
@@ -1147,7 +1154,7 @@ const deckFromChords = (
 
 // 題庫來源 A：調內所選級數 × 所選類型（只留符合調性的組合）
 const buildDeck = (
-  key: Key, scope: Scope, shapes: readonly string[], degrees: readonly number[], qualities: readonly string[],
+  key: Key, scope: Scope, shapes: readonly string[], degrees: readonly number[], qualities: readonly QualityKey[],
 ): Deck => {
   const chosenQualities = ALL_QUALITIES.filter((q) => qualities.includes(q))
   const chords = diatonicChords(key)
@@ -1159,7 +1166,7 @@ const buildDeck = (
 }
 
 /* ── 文案：和弦類型與按法的中文名稱（UI 專用，domain 只留結構資料） ── */
-const QUALITY_TEXT: Record<string, { readonly label: string; readonly formula: string }> = {
+const QUALITY_TEXT: Record<QualityKey, { readonly label: string; readonly formula: string }> = {
   maj: { label: "大三和弦 (maj)", formula: "1  3  5" },
   min: { label: "小三和弦 (m)", formula: "1  ♭3  5" },
   "7": { label: "屬七和弦 (7)", formula: "1  3  5  ♭7" },
@@ -1172,8 +1179,8 @@ const QUALITY_TEXT: Record<string, { readonly label: string; readonly formula: s
   dim: { label: "減三和弦 (dim)", formula: "1  ♭3  ♭5" },
   aug: { label: "增三和弦 (aug)", formula: "1  3  ♯5" },
 }
-const qualityLabel = (key: string): string => QUALITY_TEXT[key]?.label ?? key
-const qualityFormula = (key: string): string => QUALITY_TEXT[key]?.formula ?? ""
+const qualityLabel = (key: QualityKey): string => QUALITY_TEXT[key].label
+const qualityFormula = (key: QualityKey): string => QUALITY_TEXT[key].formula
 
 const voicingTitle = (v: { readonly origin: VoicingOrigin; readonly rebassed: boolean }): string => {
   const o = v.origin
@@ -1199,7 +1206,7 @@ const practiceReducer = (s: PracticeSession, a: PracticeAction): PracticeSession
 }
 
 /* ① 和弦進行 Domain */
-interface ProgStep { readonly deg: number; readonly q?: string } // q：覆蓋和弦類型（例如藍調用屬七）
+interface ProgStep { readonly deg: number; readonly q?: QualityKey } // q：覆蓋和弦類型（例如藍調用屬七）
 interface ProgDef { readonly key: string; readonly label: string; readonly steps: readonly ProgStep[] }
 
 const degs = (...d: number[]): ProgStep[] => d.map((deg) => ({ deg }))
@@ -1228,7 +1235,7 @@ interface ProgChord {
   readonly numeral: string
   readonly name: string
   readonly root: PitchClass
-  readonly quality: string
+  readonly quality: QualityKey
   readonly degree: number
   readonly voicing: FinderVoicing | null
 }
@@ -1268,7 +1275,7 @@ const practiceChordsOfProgression = (chords: readonly ProgChord[]): PracticeChor
 }
 
 const TEMPOS: readonly number[] = [60, 80, 100, 120, 140]
-const MINORISH_QUALITIES = new Set(["min", "m7", "dim", "m7b5"])
+const MINORISH_QUALITIES: ReadonlySet<QualityKey> = new Set<QualityKey>(["min", "m7", "dim", "m7b5"])
 
 /* ① 和弦分頁的共用設定（調性、指法範圍三個模式共用） */
 type HubSection = "finder" | "progression" | "practice"
@@ -1282,7 +1289,7 @@ interface HubSettings {
   scope: Scope
   // 速查
   finderRoot: PitchClass
-  finderQuality: string
+  finderQuality: QualityKey
   finderBass: number       // on 低音；-1 = 不指定
   // 進行
   progKey: string
@@ -1292,12 +1299,12 @@ interface HubSettings {
   source: PracticeSource
   shuffle: boolean
   degrees: number[]
-  qualities: string[]
+  qualities: QualityKey[]
 }
 const DEFAULT_HUB: HubSettings = {
   section: "finder",
-  tonic: 0, mode: "major", scope: "open",
-  finderRoot: 0, finderQuality: "maj", finderBass: -1,
+  tonic: mod12(0), mode: "major", scope: "open",
+  finderRoot: mod12(0), finderQuality: "maj", finderBass: -1,
   progKey: MAJOR_PROGS[0].key, bpm: 80, beats: 4,
   source: "scale", shuffle: true,
   degrees: [...ALL_DEGREES], qualities: ["maj", "min"],
@@ -1319,12 +1326,12 @@ const hubRepository = {
         mode: m.mode === "minor" ? "minor" : "major",
         scope: m.scope === "open" || m.scope === "barre" || m.scope === "both" ? m.scope : "open",
         finderRoot: mod12(typeof m.finderRoot === "number" ? m.finderRoot : 0),
-        finderQuality: isValidQuality(m.finderQuality) ? m.finderQuality : "maj",
+        finderQuality: isQualityKey(m.finderQuality) ? m.finderQuality : "maj",
         finderBass: typeof m.finderBass === "number" && m.finderBass >= 0 && m.finderBass <= 11
           ? Math.floor(m.finderBass) : -1,
         source: m.source === "progression" ? "progression" : "scale",
         degrees: Array.isArray(m.degrees) ? m.degrees.filter((d) => d >= 0 && d <= 6) : [...ALL_DEGREES],
-        qualities: Array.isArray(m.qualities) ? m.qualities.filter(isValidQuality) : ["maj", "min"],
+        qualities: Array.isArray(m.qualities) ? m.qualities.filter(isQualityKey) : ["maj", "min"],
       }
     } catch { return DEFAULT_HUB }
   },
@@ -1342,7 +1349,7 @@ const initialHub = hubRepository.load()
  */
 function chordDetailRows(p: {
   root: PitchClass
-  quality: string
+  quality: QualityKey
   flats: boolean
   prefs: DiagramPrefs
   scope: Scope
@@ -1493,11 +1500,11 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
     synth.stop()
     patch({ section: v })
   }
-  const openInFinder = (root: PitchClass, quality: string) => {
+  const openInFinder = (root: PitchClass, quality: QualityKey) => {
     synth.stop()
     patch({ section: "finder", finderRoot: root, finderQuality: quality, finderBass: -1 })
   }
-  const auditionFinder = (root: PitchClass, quality: string, bass: number) => {
+  const auditionFinder = (root: PitchClass, quality: QualityKey, bass: number) => {
     if (!prefs.soundOn || !prefs.autoPlay) return
     const vs = voicingsInScope(root, quality, s.scope, prefs.barreShapes, bass)
     if (vs.length > 0) playChord(vs[0].frets, prefs.playStyle)
@@ -1530,13 +1537,17 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
         footer={<Text>「指定低音」可查詢斜線和弦（分數和弦），例如根音 C、指定低音 G 就是 C/G；低音若為和弦內音，即是轉位和弦。</Text>}>
         <Picker title="根音" value={s.finderRoot} pickerStyle="menu"
           onChanged={(v: number) => {
-            patch({ finderRoot: v })
-            auditionFinder(v, s.finderQuality, s.finderBass >= 0 && s.finderBass !== v ? s.finderBass : -1)
+            patch({ finderRoot: mod12(v) })
+            auditionFinder(mod12(v), s.finderQuality, s.finderBass >= 0 && s.finderBass !== v ? s.finderBass : -1)
           }}>
           {NOTE_LABELS.map((r, i) => <Text key={r} tag={i}>{r}</Text>)}
         </Picker>
         <Picker title="類型" value={s.finderQuality} pickerStyle="menu"
-          onChanged={(v: string) => { patch({ finderQuality: v }); auditionFinder(finderRoot, v, finderBass) }}>
+          onChanged={(v: string) => {
+            if (!isQualityKey(v)) return
+            patch({ finderQuality: v })
+            auditionFinder(finderRoot, v, finderBass)
+          }}>
           {FINDER_QUALITIES.map((x) => <Text key={x.key} tag={x.key}>{qualityLabel(x.key)}</Text>)}
         </Picker>
         <Picker title="指定低音" value={s.finderBass} pickerStyle="menu"
@@ -1743,7 +1754,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
     <Section key="key" header={<Text>調性與指法</Text>}
       footer={<Text>主音、調式與指法範圍由三個模式共用，切換模式不必重選。速查的根音與低音另外在速查內選擇。</Text>}>
       <Picker title="主音" value={s.tonic} pickerStyle="menu"
-        onChanged={(v: number) => { patch({ tonic: v }); setSelected(0) }}>
+        onChanged={(v: number) => { patch({ tonic: mod12(v) }); setSelected(0) }}>
         {TONIC_LABELS.map((label, i) => <Text key={i} tag={i}>{label}</Text>)}
       </Picker>
       <Picker title="調式" value={s.mode} pickerStyle="segmented"
@@ -1794,7 +1805,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
  * 其他主音則整組平移；平移後超過第 12 格就改用低八度，低於第 0 格的部分裁掉。
  * 範圍只依主音決定，音階類型（大調、小調、五聲音階…）只決定範圍內有哪些音。
  * ════════════════════════════════════════════════ */
-const OPEN_PC: Record<StringNo, PitchClass> = { 6: 4, 5: 9, 4: 2, 3: 7, 2: 11, 1: 4 }
+const OPEN_PC: Record<StringNo, PitchClass> = { 6: mod12(4), 5: mod12(9), 4: mod12(2), 3: mod12(7), 2: mod12(11), 1: mod12(4) }
 const pitchAt = (s: StringNo, fret: number): PitchClass => mod12(OPEN_PC[s] + fret)
 
 type ScalePositionNo = 1 | 2 | 3 | 4 | 5
@@ -2299,7 +2310,7 @@ function ScaleExplorer({ prefs, layout, root, scaleIdx, scalePosition, onRoot, o
 
   // 換主音或音階類型時，依設定自動試聽（上行）
   const audition = (r: number, idx: number) => {
-    if (prefs.soundOn && prefs.autoPlay) playScale(r, SCALES[idx], "up")
+    if (prefs.soundOn && prefs.autoPlay) playScale(mod12(r), SCALES[idx], "up")
   }
 
   // 橫式指板超出可用寬度時自動改用直式（上限由版面依窗格寬度計算）
@@ -2426,10 +2437,10 @@ function ScaleTab({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
       {page === "browse"
         ? <ScaleExplorer prefs={prefs} layout={layout}
             root={root} scaleIdx={scaleIdx} scalePosition={scalePosition}
-            onRoot={setRoot} onScale={setScaleIdx} onScalePosition={setScalePosition} />
+            onRoot={(v: number) => setRoot(mod12(v))} onScale={setScaleIdx} onScalePosition={setScalePosition} />
         : <FretboardDrill prefs={prefs} layout={layout} mode={page}
             root={root} scaleIdx={scaleIdx} scalePosition={scalePosition === 0 ? 1 : scalePosition}
-            onRoot={setRoot} onScale={setScaleIdx} onScalePosition={setScalePosition} />}
+            onRoot={(v: number) => setRoot(mod12(v))} onScale={setScaleIdx} onScalePosition={setScalePosition} />}
     </VStack>
   )
 }
@@ -2685,7 +2696,7 @@ const DEFAULT_RHYTHM: RhythmSettings = {
   kind: "strum", beats: 4,
   strumPattern: firstStrum(4).pattern, pickKey: firstPick(4).key,
   notation: "pima",
-  bpm: 80, tonic: 0, mode: "major", progKey: MAJOR_PROGS[0].key,
+  bpm: 80, tonic: mod12(0), mode: "major", progKey: MAJOR_PROGS[0].key,
   prefer: "open", bars: 1, repeats: 2,
 }
 const RHYTHM_KEY = "rhythm.settings.v1"
@@ -3047,7 +3058,7 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
     <Section key="prog" header={<Text>{`${keyTitle}・${prog.label}`}</Text>}
       footer={<Text>點選和弦可切換上方指彈圖與試聽的和弦；播放時會標出目前彈到的和弦。</Text>}>
       <Picker title="主音" value={s.tonic} pickerStyle="menu"
-        onChanged={(v: number) => { patch({ tonic: v }); setSelected(0) }}>
+        onChanged={(v: number) => { patch({ tonic: mod12(v) }); setSelected(0) }}>
         {TONIC_LABELS.map((label, i) => <Text key={i} tag={i}>{label}</Text>)}
       </Picker>
       <Picker title="調式" value={s.mode} pickerStyle="segmented"
@@ -3132,7 +3143,7 @@ const PREVIEW_SPEC: DiagramSpec = {
   frets: [1, 3, 3, 2, 1, 1],
   fingers: [1, 3, 4, 2, 1, 1],
   barre: { fret: 1, from: 0, to: 5 },
-  root: 5,
+  root: mod12(5),
 }
 
 // iPad：直接以完整高度顯示，不需拉出；手機維持半高／全高
@@ -3152,7 +3163,7 @@ function PrefsSheet(props: {
   onClose: () => void
 }) {
   const { prefs, pad, previewWidth, onChange, onReset, onClose } = props
-  const nm = noteName(resolveFlats(prefs.accidental, prefersFlats({ tonic: 5, mode: "major" })))
+  const nm = noteName(resolveFlats(prefs.accidental, prefersFlats({ tonic: mod12(5), mode: "major" })))
 
   return (
     <NavigationStack>
@@ -3337,8 +3348,9 @@ async function run() {
 run()
 
 // 僅供單元測試匯入的純領域函式（Scripting 執行時忽略匯出）。
+export type { QualityKey }
 export {
-  mod12, noteName, prefersFlats, shuffled, nextRandom, computeLayout,
+  mod12, noteName, prefersFlats, isQualityKey, QUALITY_KEYS, shuffled, nextRandom, computeLayout,
   OPEN_STRINGS, FINDER_QUALITIES, qualityDef, MOVABLE_SHAPES, OPEN,
   getVoicings, getSlashVoicings, voicingsInScope, voicingTitle, qualityLabel, QUALITY_TEXT, resolveFingering,
   diatonicChords, resolveProgression, MAJOR_PROGS,
