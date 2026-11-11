@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, DEFAULT_HUB, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, DEFAULT_HUB, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -187,5 +187,60 @@ describe("和弦分頁的用例函式", () => {
     const deck = practiceDeckOf(DEFAULT_HUB, [], ["E", "A", "D"])
     expect(deck.voicings.length).toBeGreaterThan(0)
     deck.voicings.forEach((v) => expect(DEFAULT_HUB.qualities).toContain(v.chord.quality))
+  })
+})
+
+describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量的區塊）", () => {
+  const prefs = { ...DEFAULT_PREFS, barreShapes: ["E", "A", "D"] }
+  const noop = () => undefined
+  const hub = { ...DEFAULT_HUB, finderBass: 7 }
+  const key = { tonic: hub.tonic, mode: hub.mode }
+  const progs = MAJOR_PROGS
+  const prog = progs[0]
+  const progChords = resolveProgression(key, prog, "open", false, prefs.barreShapes)
+
+  it("finderSections：左右各一個區塊", () => {
+    const out = finderSections({
+      s: hub, prefs, bw: 320, finder: finderViewOf(hub, "auto"), patch: noop, auditionFinder: noop,
+    })
+    expect(out.map((p) => p.pane)).toEqual(["left", "right"])
+  })
+  it("progressionSections：有聲音時三個左欄＋一個右欄", () => {
+    const out = progressionSections({
+      s: hub, prefs, bw: 320, keyTitle: "C 大調", keyFlats: false, progs, progIdx: 0, prog, progChords,
+      progSummary: "x", seconds: 12, selIdx: 0, sel: progChords[0], patch: noop, setSelected: noop,
+      choose: noop, playAll: noop, openInFinder: noop,
+    })
+    expect(out.map((p) => p.pane)).toEqual(["left", "left", "left", "right"])
+  })
+  it("practiceSections：題庫來源為調內級數時有四個區塊", () => {
+    const deck = buildDeck(key, "open", prefs.barreShapes, hub.degrees, hub.qualities)
+    const ordered = deck.voicings
+    const out = practiceSections({
+      s: hub, prefs, bw: 320, keyTitle: "C 大調", keyFlats: false, prog, chords: diatonicChords(key),
+      hasOpen: [true], diatonicName: () => "C", deck, ordered, current: ordered[0],
+      session: { seed: 1, index: 0 }, skippedText: "", nothingSelected: false, patch: noop,
+      dispatch: noop, step: noop, openInFinder: noop,
+    })
+    expect(out.map((p) => p.pane)).toEqual(["left", "right", "left", "left"])
+  })
+  it("節奏頁區塊：每個函式都能建出畫面描述", () => {
+    const s = DEFAULT_RHYTHM
+    expect(rhythmTypeSection({
+      s, strumKey: "custom", strumTemplates: [], pickTemplates: [], patch: noop, changeBeats: noop,
+    })).toBeTruthy()
+    expect(rhythmPlaySection({
+      s, songSeconds: 10, capped: false, selIdx: 0, nudgeBpm: noop,
+      audition: async () => undefined, playSong: async () => undefined, stop: noop,
+    })).toBeTruthy()
+    expect(rhythmProgSection({
+      s, layout: computeLayout(390, 844), keyTitle: "C 大調", prog, progs, progIdx: 0,
+      chords: progChords, shownIdx: 0, patch: noop, setSelected: noop, choose: noop,
+    })).toBeTruthy()
+    const grid = rhythmGridSections({
+      s, prefs, bw: 320, pattern: { kind: "strum", strokes: ["D", "U"] }, currentSlot: -1,
+      shown: progChords[0], shownFrets: [], nm: noteName(false), gridHint: "", gridLegend: "", tapStroke: noop,
+    })
+    expect(grid).toHaveLength(2)
   })
 })

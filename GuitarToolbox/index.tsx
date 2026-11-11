@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.2.4"
+const APP_VERSION = "0.2.5"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -1403,6 +1403,281 @@ function ChordCard(props: {
 }
 
 /* ① UI：和弦分頁（速查／進行／練習） */
+interface FinderCtx {
+  readonly s: HubSettings
+  readonly prefs: DiagramPrefs
+  readonly bw: number
+  readonly finder: FinderView
+  readonly patch: (p: Partial<HubSettings>) => void
+  readonly auditionFinder: (root: PitchClass, quality: QualityKey, bass: number) => void
+}
+// 速查：左欄選和弦，右欄顯示各按法
+const finderSections = (c: FinderCtx): Placed[] => {
+  const { s, prefs, bw, patch, auditionFinder } = c
+  const { root: finderRoot, bass: finderBass, flats: finderFlats, title: finderTitle } = c.finder
+  return [
+    L(
+      <Section key="pick" header={<Text>選擇和弦</Text>}
+        footer={<Text>「指定低音」可查詢斜線和弦（分數和弦），例如根音 C、指定低音 G 就是 C/G；低音若為和弦內音，即是轉位和弦。</Text>}>
+        <Picker title="根音" value={s.finderRoot} pickerStyle="menu"
+          onChanged={(v: number) => {
+            patch({ finderRoot: mod12(v) })
+            auditionFinder(mod12(v), s.finderQuality, effectiveBass(mod12(v), s.finderBass))
+          }}>
+          {NOTE_LABELS.map((r, i) => <Text key={r} tag={i}>{r}</Text>)}
+        </Picker>
+        <Picker title="類型" value={s.finderQuality} pickerStyle="menu"
+          onChanged={(v: string) => {
+            if (!isQualityKey(v)) return
+            patch({ finderQuality: v })
+            auditionFinder(finderRoot, v, finderBass)
+          }}>
+          {FINDER_QUALITIES.map((x) => <Text key={x.key} tag={x.key}>{qualityLabel(x.key)}</Text>)}
+        </Picker>
+        <Picker title="指定低音" value={s.finderBass} pickerStyle="menu"
+          onChanged={(v: number) => {
+            patch({ finderBass: v })
+            auditionFinder(finderRoot, s.finderQuality, effectiveBass(finderRoot, v))
+          }}>
+          <Text tag={-1}>無（原位）</Text>
+          {NOTE_LABELS.map((r, i) => <Text key={`b${r}`} tag={i}>{r}</Text>)}
+        </Picker>
+      </Section>,
+    ),
+    R(
+      <Section key="detail" header={<Text>{finderTitle}</Text>}>
+        {chordDetailRows({
+          root: finderRoot, quality: s.finderQuality, flats: finderFlats, prefs, scope: s.scope,
+          bass: finderBass, width: bw,
+        })}
+      </Section>,
+    ),
+  ]
+}
+
+interface ProgressionCtx {
+  readonly s: HubSettings
+  readonly prefs: DiagramPrefs
+  readonly bw: number
+  readonly keyTitle: string
+  readonly keyFlats: boolean
+  readonly progs: readonly ProgDef[]
+  readonly progIdx: number
+  readonly prog: ProgDef
+  readonly progChords: readonly ProgChord[]
+  readonly progSummary: string
+  readonly seconds: number
+  readonly selIdx: number
+  readonly sel: ProgChord | undefined
+  readonly patch: (p: Partial<HubSettings>) => void
+  readonly setSelected: (i: number) => void
+  readonly choose: (i: number) => void
+  readonly playAll: () => void
+  readonly openInFinder: (root: PitchClass, quality: QualityKey) => void
+}
+// 進行：左欄選進行、和弦與播放，右欄顯示所選和弦的指法
+const progressionSections = (c: ProgressionCtx): Placed[] => {
+  const {
+    s, prefs, bw, keyTitle, keyFlats, progs, progIdx, prog, progChords, progSummary, seconds,
+    selIdx, sel, patch, setSelected, choose, playAll, openInFinder,
+  } = c
+  const out: Placed[] = [
+    L(
+      <Section key="pick" header={<Text>和弦進行</Text>}>
+        <Picker title="進行" value={progIdx} pickerStyle="menu"
+          onChanged={(v: number) => { patch({ progKey: progs[v].key }); setSelected(0) }}>
+          {progs.map((p, i) => <Text key={p.key} tag={i}>{p.label}</Text>)}
+        </Picker>
+      </Section>,
+    ),
+    L(
+      <Section key="list" header={<Text>{`${keyTitle}・${prog.label}`}</Text>}
+        footer={<Text>點選和弦可查看指法並試聽；整段播放會依速度與拍數連續彈奏。</Text>}>
+        <Text font="headline">{progSummary}</Text>
+        {progChords.map((c, i) => (
+          <Button key={i}
+            title={`${i + 1}.　${c.numeral}　${c.name}${c.voicing ? "" : "（無指法）"}`}
+            systemImage={i === selIdx ? "checkmark.circle.fill" : "circle"}
+            buttonStyle="borderless"
+            action={() => choose(i)} />
+        ))}
+      </Section>,
+    ),
+  ]
+  if (prefs.soundOn) {
+    out.push(
+      L(
+        <Section key="play" header={<Text>播放</Text>}
+          footer={<Text>{`約 ${seconds} 秒。播放方式（同時／掃弦／琶音）可在設定中調整。`}</Text>}>
+          <Picker title="速度" value={s.bpm} pickerStyle="menu"
+            onChanged={(v: number) => patch({ bpm: v })}>
+            {TEMPOS.map((t) => <Text key={t} tag={t}>{`${t} BPM`}</Text>)}
+          </Picker>
+          <Picker title="每個和弦" value={s.beats} pickerStyle="segmented"
+            onChanged={(v: number) => patch({ beats: v })}>
+            <Text tag={2}>2 拍</Text>
+            <Text tag={4}>4 拍</Text>
+          </Picker>
+          <HStack spacing={12}>
+            <Button title="▶ 播放整段進行" buttonStyle="borderedProminent"
+              lineLimit={1} fixedSize={true}
+              action={playAll} />
+            <Button title="■ 停止" buttonStyle="bordered"
+              lineLimit={1} fixedSize={true}
+              action={() => synth.stop()} />
+          </HStack>
+        </Section>,
+      ),
+    )
+  }
+  if (sel && sel.voicing) {
+    out.push(
+      R(
+        <Section key="detail" header={<Text>{`${sel.numeral}　${sel.name}・${voicingTitle(sel.voicing)}`}</Text>}>
+          {chordDetailRows({
+            root: sel.root, quality: sel.quality, flats: keyFlats, prefs, scope: s.scope,
+            only: sel.voicing, width: bw,
+          })}
+          <HStack>
+            <Button title="在速查中開啟" buttonStyle="borderless"
+              lineLimit={1} fixedSize={true}
+              action={() => openInFinder(sel.root, sel.quality)} />
+            <Spacer />
+            <Button title="以此進行練習" buttonStyle="borderless"
+              lineLimit={1} fixedSize={true}
+              action={() => patch({ section: "practice", source: "progression" })} />
+          </HStack>
+        </Section>,
+      ),
+    )
+  }
+  return out
+}
+
+interface PracticeCtx {
+  readonly s: HubSettings
+  readonly prefs: DiagramPrefs
+  readonly bw: number
+  readonly keyTitle: string
+  readonly keyFlats: boolean
+  readonly prog: ProgDef
+  readonly chords: readonly Chord[]
+  readonly hasOpen: readonly boolean[]
+  readonly diatonicName: (c: Chord) => string
+  readonly deck: Deck
+  readonly ordered: readonly TrainerVoicing[]
+  readonly current: TrainerVoicing | undefined
+  readonly session: PracticeSession
+  readonly skippedText: string
+  readonly nothingSelected: boolean
+  readonly patch: (p: Partial<HubSettings>) => void
+  readonly dispatch: (a: PracticeAction) => void
+  readonly step: (dir: 1 | -1) => void
+  readonly openInFinder: (root: PitchClass, quality: QualityKey) => void
+}
+// 練習：左欄選題庫，右欄顯示練習卡
+const practiceSections = (c: PracticeCtx): Placed[] => {
+  const {
+    s, prefs, bw, keyTitle, keyFlats, prog, chords, hasOpen, diatonicName, deck, ordered, current,
+    session, skippedText, nothingSelected, patch, dispatch, step, openInFinder,
+  } = c
+  const out: Placed[] = [
+    L(
+      <Section key="source" header={<Text>題庫來源</Text>}
+        footer={s.source === "progression"
+          ? <Text>{`目前題庫：${keyTitle}・${prog.label} 裡出現的和弦。可在「進行」分頁更換。`}</Text>
+          : undefined}>
+        <Picker title="來源" value={s.source} pickerStyle="segmented"
+          onChanged={(v: string) => patch({ source: v as PracticeSource })}>
+          <Text tag="scale">調內級數</Text>
+          <Text tag="progression">目前進行</Text>
+        </Picker>
+      </Section>,
+    ),
+    R(
+      <Section key="card" header={<Text>練習卡（{keyTitle}）</Text>}>
+        {current ? (
+          <ChordCard voicing={current} flats={keyFlats} prefs={prefs} width={bw}
+            onOpenFinder={() => openInFinder(current.chord.root, current.chord.quality)} />
+        ) : (
+          <Text foregroundStyle="secondaryLabel">
+            {nothingSelected
+              ? "請至少選擇一個級數與一種和弦類型。"
+              : "所選的和弦在這個指法範圍內沒有符合的指法，請調整選項。"}
+          </Text>
+        )}
+        <HStack spacing={8}>
+          <Button title="‹ 上一個" buttonStyle="bordered"
+            lineLimit={1} fixedSize={true}
+            disabled={!current} action={() => step(-1)} />
+          <Spacer />
+          <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1} fixedSize={true}>
+            {current ? `${(session.index % ordered.length) + 1} / ${ordered.length}` : "0 / 0"}
+          </Text>
+          <Spacer />
+          <Button title="下一個 ›" buttonStyle="borderedProminent"
+            lineLimit={1} fixedSize={true}
+            disabled={!current} action={() => step(1)} />
+        </HStack>
+        <HStack>
+          <Spacer />
+          <Button title="重新排序" buttonStyle="borderless"
+            lineLimit={1} fixedSize={true}
+            disabled={!s.shuffle}
+            action={() => dispatch({ type: "reset", seed: Date.now() % 2147483647 })} />
+          <Spacer />
+        </HStack>
+        <Toggle title="隨機順序" value={s.shuffle}
+          onChanged={(v: boolean) => patch({ shuffle: v })} />
+        {deck.skipped.length > 0 ? (
+          <Text font="footnote" foregroundStyle="secondaryLabel">
+            {`此範圍略過：${skippedText}（沒有收錄的指法）`}
+          </Text>
+        ) : null}
+      </Section>,
+    ),
+  ]
+  if (s.source === "scale") {
+    out.push(
+      L(
+        <Section key="degrees" header={<Text>練習級數（可複選）</Text>}>
+          <HStack>
+            <Button title="全選" buttonStyle="borderless"
+              action={() => patch({ degrees: [...ALL_DEGREES] })} />
+            <Spacer />
+            <Button title="全部取消" buttonStyle="borderless"
+              action={() => patch({ degrees: [] })} />
+          </HStack>
+          {chords.map((c) => (
+            <Toggle key={c.degree}
+              title={`${romanNumeral(c)}　${diatonicName(c)}${hasOpen[c.degree] ? "" : "（沒有常見開放和弦）"}`}
+              value={s.degrees.includes(c.degree)}
+              onChanged={() => patch({ degrees: toggleIn(s.degrees, c.degree) })} />
+          ))}
+        </Section>,
+      ),
+      L(
+        <Section key="qualities" header={<Text>練習和弦類型（可複選）</Text>}
+          footer={<Text>只會練習符合調性的和弦：以所選級數的音為根音，且組成音都必須在該調音階內。</Text>}>
+          <HStack>
+            <Button title="全選" buttonStyle="borderless"
+              action={() => patch({ qualities: [...ALL_QUALITIES] })} />
+            <Spacer />
+            <Button title="全部取消" buttonStyle="borderless"
+              action={() => patch({ qualities: [] })} />
+          </HStack>
+          {FINDER_QUALITIES.map((q) => (
+            <Toggle key={q.key} title={qualityLabel(q.key)}
+              value={s.qualities.includes(q.key)}
+              onChanged={() => patch({ qualities: toggleIn(s.qualities, q.key) })} />
+          ))}
+        </Section>,
+      ),
+    )
+  }
+  return out
+}
+
 function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   const [s, setS] = useState<HubSettings>(initialHub)
   const [session, dispatch] = useReducer(practiceReducer, { seed: 1, index: 0 })
@@ -1499,223 +1774,19 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
     if (prefs.soundOn && v) playChord(v.frets, prefs.playStyle)
   }
 
-  /* ── 各模式的區塊：每個區塊明確宣告放左欄（L）或右欄（R） ── */
-  const finderSections = (): Placed[] => [
-    L(
-      <Section key="pick" header={<Text>選擇和弦</Text>}
-        footer={<Text>「指定低音」可查詢斜線和弦（分數和弦），例如根音 C、指定低音 G 就是 C/G；低音若為和弦內音，即是轉位和弦。</Text>}>
-        <Picker title="根音" value={s.finderRoot} pickerStyle="menu"
-          onChanged={(v: number) => {
-            patch({ finderRoot: mod12(v) })
-            auditionFinder(mod12(v), s.finderQuality, effectiveBass(mod12(v), s.finderBass))
-          }}>
-          {NOTE_LABELS.map((r, i) => <Text key={r} tag={i}>{r}</Text>)}
-        </Picker>
-        <Picker title="類型" value={s.finderQuality} pickerStyle="menu"
-          onChanged={(v: string) => {
-            if (!isQualityKey(v)) return
-            patch({ finderQuality: v })
-            auditionFinder(finderRoot, v, finderBass)
-          }}>
-          {FINDER_QUALITIES.map((x) => <Text key={x.key} tag={x.key}>{qualityLabel(x.key)}</Text>)}
-        </Picker>
-        <Picker title="指定低音" value={s.finderBass} pickerStyle="menu"
-          onChanged={(v: number) => {
-            patch({ finderBass: v })
-            auditionFinder(finderRoot, s.finderQuality, effectiveBass(finderRoot, v))
-          }}>
-          <Text tag={-1}>無（原位）</Text>
-          {NOTE_LABELS.map((r, i) => <Text key={`b${r}`} tag={i}>{r}</Text>)}
-        </Picker>
-      </Section>,
-    ),
-    R(
-      <Section key="detail" header={<Text>{finderTitle}</Text>}>
-        {chordDetailRows({
-          root: finderRoot, quality: s.finderQuality, flats: finderFlats, prefs, scope: s.scope,
-          bass: finderBass, width: bw,
-        })}
-      </Section>,
-    ),
-  ]
-
-  const progressionSections = (): Placed[] => {
-    const out: Placed[] = [
-      L(
-        <Section key="pick" header={<Text>和弦進行</Text>}>
-          <Picker title="進行" value={progIdx} pickerStyle="menu"
-            onChanged={(v: number) => { patch({ progKey: progs[v].key }); setSelected(0) }}>
-            {progs.map((p, i) => <Text key={p.key} tag={i}>{p.label}</Text>)}
-          </Picker>
-        </Section>,
-      ),
-      L(
-        <Section key="list" header={<Text>{`${keyTitle}・${prog.label}`}</Text>}
-          footer={<Text>點選和弦可查看指法並試聽；整段播放會依速度與拍數連續彈奏。</Text>}>
-          <Text font="headline">{progSummary}</Text>
-          {progChords.map((c, i) => (
-            <Button key={i}
-              title={`${i + 1}.　${c.numeral}　${c.name}${c.voicing ? "" : "（無指法）"}`}
-              systemImage={i === selIdx ? "checkmark.circle.fill" : "circle"}
-              buttonStyle="borderless"
-              action={() => choose(i)} />
-          ))}
-        </Section>,
-      ),
-    ]
-    if (prefs.soundOn) {
-      out.push(
-        L(
-          <Section key="play" header={<Text>播放</Text>}
-            footer={<Text>{`約 ${seconds} 秒。播放方式（同時／掃弦／琶音）可在設定中調整。`}</Text>}>
-            <Picker title="速度" value={s.bpm} pickerStyle="menu"
-              onChanged={(v: number) => patch({ bpm: v })}>
-              {TEMPOS.map((t) => <Text key={t} tag={t}>{`${t} BPM`}</Text>)}
-            </Picker>
-            <Picker title="每個和弦" value={s.beats} pickerStyle="segmented"
-              onChanged={(v: number) => patch({ beats: v })}>
-              <Text tag={2}>2 拍</Text>
-              <Text tag={4}>4 拍</Text>
-            </Picker>
-            <HStack spacing={12}>
-              <Button title="▶ 播放整段進行" buttonStyle="borderedProminent"
-                lineLimit={1} fixedSize={true}
-                action={playAll} />
-              <Button title="■ 停止" buttonStyle="bordered"
-                lineLimit={1} fixedSize={true}
-                action={() => synth.stop()} />
-            </HStack>
-          </Section>,
-        ),
-      )
-    }
-    if (sel && sel.voicing) {
-      out.push(
-        R(
-          <Section key="detail" header={<Text>{`${sel.numeral}　${sel.name}・${voicingTitle(sel.voicing)}`}</Text>}>
-            {chordDetailRows({
-              root: sel.root, quality: sel.quality, flats: keyFlats, prefs, scope: s.scope,
-              only: sel.voicing, width: bw,
-            })}
-            <HStack>
-              <Button title="在速查中開啟" buttonStyle="borderless"
-                lineLimit={1} fixedSize={true}
-                action={() => openInFinder(sel.root, sel.quality)} />
-              <Spacer />
-              <Button title="以此進行練習" buttonStyle="borderless"
-                lineLimit={1} fixedSize={true}
-                action={() => patch({ section: "practice", source: "progression" })} />
-            </HStack>
-          </Section>,
-        ),
-      )
-    }
-    return out
-  }
-
-  const practiceSections = (): Placed[] => {
-    const out: Placed[] = [
-      L(
-        <Section key="source" header={<Text>題庫來源</Text>}
-          footer={s.source === "progression"
-            ? <Text>{`目前題庫：${keyTitle}・${prog.label} 裡出現的和弦。可在「進行」分頁更換。`}</Text>
-            : undefined}>
-          <Picker title="來源" value={s.source} pickerStyle="segmented"
-            onChanged={(v: string) => patch({ source: v as PracticeSource })}>
-            <Text tag="scale">調內級數</Text>
-            <Text tag="progression">目前進行</Text>
-          </Picker>
-        </Section>,
-      ),
-      R(
-        <Section key="card" header={<Text>練習卡（{keyTitle}）</Text>}>
-          {current ? (
-            <ChordCard voicing={current} flats={keyFlats} prefs={prefs} width={bw}
-              onOpenFinder={() => openInFinder(current.chord.root, current.chord.quality)} />
-          ) : (
-            <Text foregroundStyle="secondaryLabel">
-              {nothingSelected
-                ? "請至少選擇一個級數與一種和弦類型。"
-                : "所選的和弦在這個指法範圍內沒有符合的指法，請調整選項。"}
-            </Text>
-          )}
-          <HStack spacing={8}>
-            <Button title="‹ 上一個" buttonStyle="bordered"
-              lineLimit={1} fixedSize={true}
-              disabled={!current} action={() => step(-1)} />
-            <Spacer />
-            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1} fixedSize={true}>
-              {current ? `${(session.index % ordered.length) + 1} / ${ordered.length}` : "0 / 0"}
-            </Text>
-            <Spacer />
-            <Button title="下一個 ›" buttonStyle="borderedProminent"
-              lineLimit={1} fixedSize={true}
-              disabled={!current} action={() => step(1)} />
-          </HStack>
-          <HStack>
-            <Spacer />
-            <Button title="重新排序" buttonStyle="borderless"
-              lineLimit={1} fixedSize={true}
-              disabled={!s.shuffle}
-              action={() => dispatch({ type: "reset", seed: Date.now() % 2147483647 })} />
-            <Spacer />
-          </HStack>
-          <Toggle title="隨機順序" value={s.shuffle}
-            onChanged={(v: boolean) => patch({ shuffle: v })} />
-          {deck.skipped.length > 0 ? (
-            <Text font="footnote" foregroundStyle="secondaryLabel">
-              {`此範圍略過：${skippedText}（沒有收錄的指法）`}
-            </Text>
-          ) : null}
-        </Section>,
-      ),
-    ]
-    if (s.source === "scale") {
-      out.push(
-        L(
-          <Section key="degrees" header={<Text>練習級數（可複選）</Text>}>
-            <HStack>
-              <Button title="全選" buttonStyle="borderless"
-                action={() => patch({ degrees: [...ALL_DEGREES] })} />
-              <Spacer />
-              <Button title="全部取消" buttonStyle="borderless"
-                action={() => patch({ degrees: [] })} />
-            </HStack>
-            {chords.map((c) => (
-              <Toggle key={c.degree}
-                title={`${romanNumeral(c)}　${diatonicName(c)}${hasOpen[c.degree] ? "" : "（沒有常見開放和弦）"}`}
-                value={s.degrees.includes(c.degree)}
-                onChanged={() => patch({ degrees: toggleIn(s.degrees, c.degree) })} />
-            ))}
-          </Section>,
-        ),
-        L(
-          <Section key="qualities" header={<Text>練習和弦類型（可複選）</Text>}
-            footer={<Text>只會練習符合調性的和弦：以所選級數的音為根音，且組成音都必須在該調音階內。</Text>}>
-            <HStack>
-              <Button title="全選" buttonStyle="borderless"
-                action={() => patch({ qualities: [...ALL_QUALITIES] })} />
-              <Spacer />
-              <Button title="全部取消" buttonStyle="borderless"
-                action={() => patch({ qualities: [] })} />
-            </HStack>
-            {FINDER_QUALITIES.map((q) => (
-              <Toggle key={q.key} title={qualityLabel(q.key)}
-                value={s.qualities.includes(q.key)}
-                onChanged={() => patch({ qualities: toggleIn(s.qualities, q.key) })} />
-            ))}
-          </Section>,
-        ),
-      )
-    }
-    return out
-  }
-
   /* ── 雙欄分配：由各區塊自己宣告左欄或右欄 ── */
   const placed: Placed[] =
-    s.section === "finder" ? finderSections()
-      : s.section === "progression" ? progressionSections()
-        : practiceSections()
+    s.section === "finder"
+      ? finderSections({ s, prefs, bw, finder, patch, auditionFinder })
+      : s.section === "progression"
+        ? progressionSections({
+          s, prefs, bw, keyTitle, keyFlats, progs, progIdx, prog, progChords, progSummary, seconds,
+          selIdx, sel, patch, setSelected, choose, playAll, openInFinder,
+        })
+        : practiceSections({
+          s, prefs, bw, keyTitle, keyFlats, prog, chords, hasOpen, diatonicName, deck, ordered, current,
+          session, skippedText, nothingSelected, patch, dispatch, step, openInFinder,
+        })
   const nodesOf = (pane: Pane): JSX.Element[] =>
     placed.filter((p) => p.pane === pane).map((p) => p.node)
 
@@ -2759,6 +2830,219 @@ function PickGrid(props: {
   )
 }
 
+interface RhythmTypeCtx {
+  readonly s: RhythmSettings
+  readonly strumKey: string
+  readonly strumTemplates: readonly StrumTemplate[]
+  readonly pickTemplates: readonly PickTemplate[]
+  readonly patch: (p: Partial<RhythmSettings>) => void
+  readonly changeBeats: (beats: number) => void
+}
+// 節奏型態：類型、拍號、模板與指法標示
+const rhythmTypeSection = (c: RhythmTypeCtx): JSX.Element => {
+  const { s, strumKey, strumTemplates, pickTemplates, patch, changeBeats } = c
+  return (
+    <Section key="type" header={<Text>節奏型態</Text>}>
+      <Picker title="類型" value={s.kind} pickerStyle="segmented"
+        onChanged={(v: string) => patch({ kind: v as RhythmKind })}>
+        <Text tag="strum">刷弦</Text>
+        <Text tag="pick">指彈</Text>
+      </Picker>
+      <Picker title="拍號" value={s.beats} pickerStyle="segmented"
+        onChanged={(v: number) => changeBeats(v)}>
+        <Text tag={4}>4/4</Text>
+        <Text tag={3}>3/4</Text>
+      </Picker>
+      {s.kind === "strum" ? (
+        <Picker title="模板" value={strumKey} pickerStyle="menu"
+          onChanged={(v: string) => {
+            const t = strumTemplates.find((x) => x.key === v)
+            if (t) patch({ strumPattern: t.pattern })
+          }}>
+          {strumTemplates.map((t) => <Text key={t.key} tag={t.key}>{t.label}</Text>)}
+          {strumKey === "custom" ? <Text tag="custom">自訂</Text> : null}
+        </Picker>
+      ) : (
+        <Picker title="模板" value={s.pickKey} pickerStyle="menu"
+          onChanged={(v: string) => patch({ pickKey: v })}>
+          {pickTemplates.map((t) => <Text key={t.key} tag={t.key}>{t.label}</Text>)}
+        </Picker>
+      )}
+      {s.kind === "pick" ? (
+        <Picker title="指法標示" value={s.notation} pickerStyle="segmented"
+          onChanged={(v: string) => { if (isFingerNotation(v)) patch({ notation: v }) }}>
+          <Text tag="pima">p i m a</Text>
+          <Text tag="t123">T 1 2 3</Text>
+        </Picker>
+      ) : null}
+    </Section>
+  )
+}
+
+interface RhythmPlayCtx {
+  readonly s: RhythmSettings
+  readonly songSeconds: number
+  readonly capped: boolean
+  readonly selIdx: number
+  readonly nudgeBpm: (delta: number) => void
+  readonly audition: (i: number) => Promise<void>
+  readonly playSong: () => Promise<void>
+  readonly stop: () => void
+}
+// 播放：速度微調、試聽、播放整段與停止
+const rhythmPlaySection = (c: RhythmPlayCtx): JSX.Element => {
+  const { s, songSeconds, capped, selIdx, nudgeBpm, audition, playSong, stop } = c
+  return (
+    <Section key="play" header={<Text>播放</Text>}
+      footer={<Text>{`整段約 ${songSeconds} 秒${capped ? "（重複次數已自動縮減，避免過長）" : ""}。試聽會以目前選的和弦彈 2 小節。調整速度會停止目前的播放。`}</Text>}>
+      <HStack>
+        <Text>速度</Text>
+        <Spacer />
+        <Text font="headline">{`${s.bpm} BPM`}</Text>
+      </HStack>
+      <HStack spacing={8}>
+        <Button title="-10" buttonStyle="bordered"
+          lineLimit={1} fixedSize={true}
+          disabled={s.bpm <= BPM_MIN} action={() => nudgeBpm(-10)} />
+        <Button title="-1" buttonStyle="bordered"
+          lineLimit={1} fixedSize={true}
+          disabled={s.bpm <= BPM_MIN} action={() => nudgeBpm(-1)} />
+        <Spacer />
+        <Button title="+1" buttonStyle="bordered"
+          lineLimit={1} fixedSize={true}
+          disabled={s.bpm >= BPM_MAX} action={() => nudgeBpm(1)} />
+        <Button title="+10" buttonStyle="bordered"
+          lineLimit={1} fixedSize={true}
+          disabled={s.bpm >= BPM_MAX} action={() => nudgeBpm(10)} />
+      </HStack>
+      <HStack spacing={8}>
+        <Button title="▶ 試聽" buttonStyle="bordered"
+          lineLimit={1} fixedSize={true}
+          action={() => { void audition(selIdx) }} />
+        <Button title="▶ 播放進行" buttonStyle="borderedProminent"
+          lineLimit={1} fixedSize={true}
+          action={() => { void playSong() }} />
+        <Button title="■ 停止" buttonStyle="bordered"
+          lineLimit={1} fixedSize={true}
+          action={stop} />
+      </HStack>
+    </Section>
+  )
+}
+
+interface RhythmProgCtx {
+  readonly s: RhythmSettings
+  readonly layout: Layout
+  readonly keyTitle: string
+  readonly prog: ProgDef
+  readonly progs: readonly ProgDef[]
+  readonly progIdx: number
+  readonly chords: readonly ProgChord[]
+  readonly shownIdx: number
+  readonly patch: (p: Partial<RhythmSettings>) => void
+  readonly setSelected: (i: number) => void
+  readonly choose: (i: number) => void
+}
+// 調性與進行：主音、調式、進行、指法、小節數、重複與和弦按鈕
+const rhythmProgSection = (c: RhythmProgCtx): JSX.Element => {
+  const { s, layout, keyTitle, prog, progs, progIdx, chords, shownIdx, patch, setSelected, choose } = c
+  return (
+    <Section key="prog" header={<Text>{`${keyTitle}・${prog.label}`}</Text>}
+      footer={<Text>點選和弦可切換上方指彈圖與試聽的和弦；播放時會標出目前彈到的和弦。</Text>}>
+      <Picker title="主音" value={s.tonic} pickerStyle="menu"
+        onChanged={(v: number) => { patch({ tonic: mod12(v) }); setSelected(0) }}>
+        {TONIC_LABELS.map((label, i) => <Text key={i} tag={i}>{label}</Text>)}
+      </Picker>
+      <Picker title="調式" value={s.mode} pickerStyle="segmented"
+        onChanged={(v: string) => {
+          const m = v as KeyMode
+          patch({ mode: m, progKey: progsOf(m)[0].key })
+          setSelected(0)
+        }}>
+        <Text tag="major">大調</Text>
+        <Text tag="minor">自然小調</Text>
+      </Picker>
+      <Picker title="進行" value={progIdx} pickerStyle="menu"
+        onChanged={(v: number) => { patch({ progKey: progs[v].key }); setSelected(0) }}>
+        {progs.map((p, i) => <Text key={p.key} tag={i}>{p.label}</Text>)}
+      </Picker>
+      <Picker title="指法" value={s.prefer} pickerStyle="segmented"
+        onChanged={(v: string) => patch({ prefer: v as Prefer })}>
+        <Text tag="open">開放</Text>
+        <Text tag="barre">封閉</Text>
+      </Picker>
+      <Picker title="每個和弦" value={s.bars} pickerStyle="segmented"
+        onChanged={(v: number) => patch({ bars: v })}>
+        <Text tag={1}>1 小節</Text>
+        <Text tag={2}>2 小節</Text>
+      </Picker>
+      <Picker title="整段重複" value={s.repeats} pickerStyle="segmented"
+        onChanged={(v: number) => patch({ repeats: v })}>
+        {REPEAT_OPTIONS.map((n) => <Text key={n} tag={n}>{`${n} 遍`}</Text>)}
+      </Picker>
+      {chunk(range(chords.length), layout.paneWidth >= 600 && !layout.split ? 6 : 4).map((row, ri) => (
+        <HStack key={ri} spacing={8}>
+          {row.map((i) => (
+            <Button key={i} title={chords[i].name}
+              buttonStyle={i === shownIdx ? "borderedProminent" : "bordered"}
+              lineLimit={1} fixedSize={true}
+              action={() => choose(i)} />
+          ))}
+        </HStack>
+      ))}
+    </Section>
+  )
+}
+
+interface RhythmGridCtx {
+  readonly s: RhythmSettings
+  readonly prefs: DiagramPrefs
+  readonly bw: number
+  readonly pattern: RhythmPattern
+  readonly currentSlot: number
+  readonly shown: ProgChord
+  readonly shownFrets: readonly Fret[]
+  readonly nm: (pc: PitchClass) => string
+  readonly gridHint: string
+  readonly gridLegend: string
+  readonly tapStroke: (i: number) => void
+}
+// 右欄：節奏圖與目前和弦的指法
+const rhythmGridSections = (c: RhythmGridCtx): JSX.Element[] => {
+  const { s, prefs, bw, pattern, currentSlot, shown, shownFrets, nm, gridHint, gridLegend, tapStroke } = c
+  return [
+    <Section key="grid" header={<Text>{`${s.kind === "strum" ? "刷法" : "指法"}・${s.beats}/4 拍・每格 = 八分音符`}</Text>}
+      footer={<Text>{gridLegend}</Text>}>
+      <HStack>
+        <Spacer />
+        {s.kind === "strum" && pattern.kind === "strum" ? (
+          <StrumGrid strokes={pattern.strokes} current={currentSlot} prefs={prefs}
+            width={bw} onTap={tapStroke} />
+        ) : null}
+        {s.kind === "pick" && pattern.kind === "pick" ? (
+          <PickGrid slots={pattern.slots} frets={shownFrets} current={currentSlot}
+            notation={s.notation} prefs={prefs} width={bw} />
+        ) : null}
+        <Spacer />
+      </HStack>
+      <Text font="subheadline" foregroundStyle="secondaryLabel">{gridHint}</Text>
+    </Section>,
+
+    <Section key="chord" header={<Text>{`${shown.numeral}　${shown.name}${shown.voicing ? `・${voicingTitle(shown.voicing)}` : ""}`}</Text>}>
+      {shown.voicing ? (
+        <HStack>
+          <Spacer />
+          <ChordBoard spec={{ frets: shown.voicing.frets, root: shown.root }} prefs={prefs} nm={nm}
+            width={bw} />
+          <Spacer />
+        </HStack>
+      ) : (
+        <Text foregroundStyle="secondaryLabel">這個和弦目前沒有收錄指法，播放時會略過。</Text>
+      )}
+    </Section>,
+  ]
+}
+
 /* ④ UI：節奏分頁 */
 interface Run { readonly startedAt: number; readonly plan: PlayPlan; readonly single: number | null }
 
@@ -2901,159 +3185,22 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
 
   // 左欄：節奏型態、播放、調性與進行；右欄：節奏圖與目前和弦指法
   const leftSections: JSX.Element[] = [
-    <Section key="type" header={<Text>節奏型態</Text>}>
-      <Picker title="類型" value={s.kind} pickerStyle="segmented"
-        onChanged={(v: string) => patch({ kind: v as RhythmKind })}>
-        <Text tag="strum">刷弦</Text>
-        <Text tag="pick">指彈</Text>
-      </Picker>
-      <Picker title="拍號" value={s.beats} pickerStyle="segmented"
-        onChanged={(v: number) => changeBeats(v)}>
-        <Text tag={4}>4/4</Text>
-        <Text tag={3}>3/4</Text>
-      </Picker>
-      {s.kind === "strum" ? (
-        <Picker title="模板" value={strumKey} pickerStyle="menu"
-          onChanged={(v: string) => {
-            const t = strumTemplates.find((x) => x.key === v)
-            if (t) patch({ strumPattern: t.pattern })
-          }}>
-          {strumTemplates.map((t) => <Text key={t.key} tag={t.key}>{t.label}</Text>)}
-          {strumKey === "custom" ? <Text tag="custom">自訂</Text> : null}
-        </Picker>
-      ) : (
-        <Picker title="模板" value={s.pickKey} pickerStyle="menu"
-          onChanged={(v: string) => patch({ pickKey: v })}>
-          {pickTemplates.map((t) => <Text key={t.key} tag={t.key}>{t.label}</Text>)}
-        </Picker>
-      )}
-      {s.kind === "pick" ? (
-        <Picker title="指法標示" value={s.notation} pickerStyle="segmented"
-          onChanged={(v: string) => { if (isFingerNotation(v)) patch({ notation: v }) }}>
-          <Text tag="pima">p i m a</Text>
-          <Text tag="t123">T 1 2 3</Text>
-        </Picker>
-      ) : null}
-    </Section>,
+    rhythmTypeSection({ s, strumKey, strumTemplates, pickTemplates, patch, changeBeats }),
   ]
 
   if (prefs.soundOn) {
     leftSections.push(
-      <Section key="play" header={<Text>播放</Text>}
-        footer={<Text>{`整段約 ${songSeconds} 秒${capped ? "（重複次數已自動縮減，避免過長）" : ""}。試聽會以目前選的和弦彈 2 小節。調整速度會停止目前的播放。`}</Text>}>
-        <HStack>
-          <Text>速度</Text>
-          <Spacer />
-          <Text font="headline">{`${s.bpm} BPM`}</Text>
-        </HStack>
-        <HStack spacing={8}>
-          <Button title="-10" buttonStyle="bordered"
-            lineLimit={1} fixedSize={true}
-            disabled={s.bpm <= BPM_MIN} action={() => nudgeBpm(-10)} />
-          <Button title="-1" buttonStyle="bordered"
-            lineLimit={1} fixedSize={true}
-            disabled={s.bpm <= BPM_MIN} action={() => nudgeBpm(-1)} />
-          <Spacer />
-          <Button title="+1" buttonStyle="bordered"
-            lineLimit={1} fixedSize={true}
-            disabled={s.bpm >= BPM_MAX} action={() => nudgeBpm(1)} />
-          <Button title="+10" buttonStyle="bordered"
-            lineLimit={1} fixedSize={true}
-            disabled={s.bpm >= BPM_MAX} action={() => nudgeBpm(10)} />
-        </HStack>
-        <HStack spacing={8}>
-          <Button title="▶ 試聽" buttonStyle="bordered"
-            lineLimit={1} fixedSize={true}
-            action={() => { void audition(selIdx) }} />
-          <Button title="▶ 播放進行" buttonStyle="borderedProminent"
-            lineLimit={1} fixedSize={true}
-            action={() => { void playSong() }} />
-          <Button title="■ 停止" buttonStyle="bordered"
-            lineLimit={1} fixedSize={true}
-            action={stop} />
-        </HStack>
-      </Section>,
+      rhythmPlaySection({ s, songSeconds, capped, selIdx, nudgeBpm, audition, playSong, stop }),
     )
   }
 
   leftSections.push(
-    <Section key="prog" header={<Text>{`${keyTitle}・${prog.label}`}</Text>}
-      footer={<Text>點選和弦可切換上方指彈圖與試聽的和弦；播放時會標出目前彈到的和弦。</Text>}>
-      <Picker title="主音" value={s.tonic} pickerStyle="menu"
-        onChanged={(v: number) => { patch({ tonic: mod12(v) }); setSelected(0) }}>
-        {TONIC_LABELS.map((label, i) => <Text key={i} tag={i}>{label}</Text>)}
-      </Picker>
-      <Picker title="調式" value={s.mode} pickerStyle="segmented"
-        onChanged={(v: string) => {
-          const m = v as KeyMode
-          patch({ mode: m, progKey: progsOf(m)[0].key })
-          setSelected(0)
-        }}>
-        <Text tag="major">大調</Text>
-        <Text tag="minor">自然小調</Text>
-      </Picker>
-      <Picker title="進行" value={progIdx} pickerStyle="menu"
-        onChanged={(v: number) => { patch({ progKey: progs[v].key }); setSelected(0) }}>
-        {progs.map((p, i) => <Text key={p.key} tag={i}>{p.label}</Text>)}
-      </Picker>
-      <Picker title="指法" value={s.prefer} pickerStyle="segmented"
-        onChanged={(v: string) => patch({ prefer: v as Prefer })}>
-        <Text tag="open">開放</Text>
-        <Text tag="barre">封閉</Text>
-      </Picker>
-      <Picker title="每個和弦" value={s.bars} pickerStyle="segmented"
-        onChanged={(v: number) => patch({ bars: v })}>
-        <Text tag={1}>1 小節</Text>
-        <Text tag={2}>2 小節</Text>
-      </Picker>
-      <Picker title="整段重複" value={s.repeats} pickerStyle="segmented"
-        onChanged={(v: number) => patch({ repeats: v })}>
-        {REPEAT_OPTIONS.map((n) => <Text key={n} tag={n}>{`${n} 遍`}</Text>)}
-      </Picker>
-      {chunk(range(chords.length), layout.paneWidth >= 600 && !layout.split ? 6 : 4).map((row, ri) => (
-        <HStack key={ri} spacing={8}>
-          {row.map((i) => (
-            <Button key={i} title={chords[i].name}
-              buttonStyle={i === shownIdx ? "borderedProminent" : "bordered"}
-              lineLimit={1} fixedSize={true}
-              action={() => choose(i)} />
-          ))}
-        </HStack>
-      ))}
-    </Section>,
+    rhythmProgSection({ s, layout, keyTitle, prog, progs, progIdx, chords, shownIdx, patch, setSelected, choose }),
   )
 
-  const rightSections: JSX.Element[] = [
-    <Section key="grid" header={<Text>{`${s.kind === "strum" ? "刷法" : "指法"}・${s.beats}/4 拍・每格 = 八分音符`}</Text>}
-      footer={<Text>{gridLegend}</Text>}>
-      <HStack>
-        <Spacer />
-        {s.kind === "strum" && pattern.kind === "strum" ? (
-          <StrumGrid strokes={pattern.strokes} current={currentSlot} prefs={prefs}
-            width={bw} onTap={tapStroke} />
-        ) : null}
-        {s.kind === "pick" && pattern.kind === "pick" ? (
-          <PickGrid slots={pattern.slots} frets={shownFrets} current={currentSlot}
-            notation={s.notation} prefs={prefs} width={bw} />
-        ) : null}
-        <Spacer />
-      </HStack>
-      <Text font="subheadline" foregroundStyle="secondaryLabel">{gridHint}</Text>
-    </Section>,
-
-    <Section key="chord" header={<Text>{`${shown.numeral}　${shown.name}${shown.voicing ? `・${voicingTitle(shown.voicing)}` : ""}`}</Text>}>
-      {shown.voicing ? (
-        <HStack>
-          <Spacer />
-          <ChordBoard spec={{ frets: shown.voicing.frets, root: shown.root }} prefs={prefs} nm={nm}
-            width={bw} />
-          <Spacer />
-        </HStack>
-      ) : (
-        <Text foregroundStyle="secondaryLabel">這個和弦目前沒有收錄指法，播放時會略過。</Text>
-      )}
-    </Section>,
-  ]
+  const rightSections = rhythmGridSections({
+    s, prefs, bw, pattern, currentSlot, shown, shownFrets, nm, gridHint, gridLegend, tapStroke,
+  })
 
   return <SplitList layout={layout} left={leftSections} right={rightSections} />
 }
@@ -3404,5 +3551,7 @@ export {
   OPEN_STRINGS, FINDER_QUALITIES, qualityDef, MOVABLE_SHAPES, OPEN,
   getVoicings, getSlashVoicings, voicingsInScope, voicingTitle, qualityLabel, QUALITY_TEXT, resolveFingering,
   diatonicChords, resolveProgression, MAJOR_PROGS,
+  finderSections, progressionSections, practiceSections, rhythmTypeSection, rhythmPlaySection,
+  rhythmProgSection, rhythmGridSections, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, practiceChordsOfProgression,
   effectiveBass, keyTitleOf, finderViewOf, stepIndex, progressionSeconds, practiceDeckOf, DEFAULT_HUB,
 }

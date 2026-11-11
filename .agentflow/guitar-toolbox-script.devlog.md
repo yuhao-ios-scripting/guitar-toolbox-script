@@ -445,3 +445,28 @@
 
 # → 提問 / A-021
 
++ godev 正常，繼續拆
+
+# → 回覆 / A-021
+
+* _2026-11-12 +0800_
+
+1. `godev 正常，繼續拆`
+
+   已拆分（0.2.5，行為不變）：
+   - `ChordHub` 的速查、進行、練習三個畫面區塊成為頂層函式 `finderSections`、`progressionSections`、`practiceSections`，各用明確的 context 介面（`FinderCtx`、`ProgressionCtx`、`PracticeCtx`）接收資料與動作；元件由 364 行降到 160 行。
+   - `RhythmStudio` 的畫面區塊成為 `rhythmTypeSection`、`rhythmPlaySection`、`rhythmProgSection`、`rhythmGridSections`；元件由 267 行降到 130 行。
+   - 區塊內容原樣搬移，只改成由 context 解構取值。
+   - 新增 4 個冒煙測試（以可檢視的 `h` 替身呼叫每個區塊函式，確認不丟例外、左右欄配置正確）。`npm run typecheck` 零錯誤，`npm test` 497 個案例通過。畫面元件 props 在型別外殼中放寬為 `any`，不受型別檢查，請實機再看一次三個和弦模式與節奏頁。尚未推送。
+
+   B-003 完成，已從 backlog 移除。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-021-1：下一步做 B-004（`Result`／`Option` 與 `assertNever`）與 B-005（移除模組載入時副作用與模組層 `rhythmTicket`）？建議預設：先 B-004，再 B-005。
+  - ans:
+
+---
+
+# → 提問 / A-022
+
