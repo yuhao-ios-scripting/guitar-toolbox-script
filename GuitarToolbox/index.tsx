@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.7.0"
+const APP_VERSION = "0.8.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -293,9 +293,11 @@ const strumEvents = (midis: readonly number[], gap: number, dur: number): NoteEv
   midis.map((midi, i) => ({ midi, at: i * gap, dur }))
 
 // 把多個音符事件混成一段 16-bit 單聲道 WAV（Karplus-Strong）
-const renderWav = (events: readonly NoteEvent[]): Uint8Array => {
+// loopSeconds：循環播放用。檔案長度剛好等於一圈，超出一圈的尾音繞回開頭，接縫就不會有空隙或節奏飄移
+const renderWav = (events: readonly NoteEvent[], loopSeconds?: number): Uint8Array => {
   const end = events.reduce((m, e) => Math.max(m, e.at + e.dur), 0)
-  const total = Math.ceil(end * SAMPLE_RATE)
+  const wrap = loopSeconds !== undefined && loopSeconds > 0
+  const total = wrap ? Math.max(1, Math.round(loopSeconds * SAMPLE_RATE)) : Math.ceil(end * SAMPLE_RATE)
   const mix = new Float32Array(total)
   let noise = 12345
   const rand = () => {
@@ -320,12 +322,12 @@ const renderWav = (events: readonly NoteEvent[]): Uint8Array => {
     mean /= n
     for (let k = 0; k < n; k++) buf[k] -= mean
 
-    for (let k = 0; k < noteLen && start + k < total; k++) {
+    for (let k = 0; k < noteLen && (wrap || start + k < total); k++) {
       const idx = k % n
       const next = (buf[idx] + buf[(idx + 1) % n]) * 0.5 * 0.997
       buf[idx] = next
       const fade = k > noteLen - fadeLen ? (noteLen - k) / fadeLen : 1
-      mix[start + k] += next * 0.5 * fade * vel
+      mix[(start + k) % total] += next * 0.5 * fade * vel
     }
   })
 
@@ -368,8 +370,8 @@ const synth = (() => {
     }
   }
 
-  const keyOf = (events: readonly NoteEvent[]): string =>
-    events.map((e) =>
+  const keyOf = (events: readonly NoteEvent[], loopSeconds?: number): string =>
+    (loopSeconds === undefined ? "" : `L${loopSeconds.toFixed(4)}|`) + events.map((e) =>
       `${e.midi}@${e.at.toFixed(3)}:${e.dur.toFixed(2)}${e.vel === undefined ? "" : `v${e.vel.toFixed(2)}`}`,
     ).join("|")
 
@@ -377,8 +379,8 @@ const synth = (() => {
     try { return await FileManager.exists(path) } catch { return true }
   }
 
-  const pathFor = async (events: readonly NoteEvent[]): Promise<string> => {
-    const key = keyOf(events)
+  const pathFor = async (events: readonly NoteEvent[], loopSeconds?: number): Promise<string> => {
+    const key = keyOf(events, loopSeconds)
     const hit = cache.get(key)
     if (hit) {
       if (await fileStillExists(hit)) { cache.delete(key); cache.set(key, hit); return hit }
@@ -388,7 +390,7 @@ const synth = (() => {
     // 先讓出一次執行緒，避免渲染長進行時畫面卡住
     await new Promise<void>((r) => setTimeout(r, 0))
     const path = `${FileManager.temporaryDirectory}/pluck_${SESSION}_${counter++}.wav`
-    await FileManager.writeAsBytes(path, renderWav(events))
+    await FileManager.writeAsBytes(path, renderWav(events, loopSeconds))
     cache.set(key, path)
 
     const excess = cache.size - MAX_CACHE
@@ -412,14 +414,15 @@ const synth = (() => {
   return {
     warm(): void { void prepareSession() },
     stop(): void { ticket++; halt() },
-    async playEvents(events: readonly NoteEvent[]): Promise<void> {
+    // loopSeconds 有值時無限循環播放（直到 stop），檔案長度即一圈的長度
+    async playEvents(events: readonly NoteEvent[], loopSeconds?: number): Promise<void> {
       if (events.length === 0) return
       const mine = ++ticket
       try {
         await prepareSession()
         if (mine !== ticket) return
 
-        const path = await pathFor(events)
+        const path = await pathFor(events, loopSeconds)
         if (mine !== ticket) return
         halt()
         playingPath = path
@@ -428,6 +431,7 @@ const synth = (() => {
         const go = () => { if (!started && player === p) { started = true; p.play() } }
         p.onReadyToPlay = go
         p.onError = (msg: string) => { console.error("AVPlayer 錯誤：" + msg) }
+        if (loopSeconds !== undefined) p.numberOfLoops = -1 // 文件：負值＝無限循環
         player = p
         if (!p.setSource(path)) throw new Error("setSource 失敗：" + path)
         // 保險：若 0.4 秒內沒收到 onReadyToPlay，直接嘗試播放
@@ -886,12 +890,13 @@ interface FretboardProps {
   readonly names?: readonly NameCell[]
   readonly prefs: DiagramPrefs
   readonly width?: number // 可用寬度：有給就依寬度撐滿，沒給就用預設 44pt
+  readonly t: Translate
   readonly label?: string // 無障礙說明：整張圖合成一個元素；有 onTap 時改為逐格說明
   readonly onTap?: (c: number, fret: number) => void
 }
 
 function Fretboard(props: FretboardProps) {
-  const { startFret, rows, marks, bar, nutMarks, names, prefs, width, onTap, label } = props
+  const { startFret, rows, marks, bar, nutMarks, names, prefs, width, onTap, label, t } = props
   const posName = noteName(prefs.accidental === "flat")
   const a11y = label !== undefined && !onTap
     ? { accessibilityElement: "ignore", accessibilityLabel: label }
@@ -919,7 +924,7 @@ function Fretboard(props: FretboardProps) {
     <BoardCell key={f} o={o} cell={cell} c={c} pal={pal}
       mark={markMap.get(`${c}:${f}`)}
       bar={barFlagsOf(bar, c, f, o)}
-      tapLabel={describePosition(c, f, posName)}
+      tapLabel={describePosition(c, f, posName, t)}
       onTap={onTap ? () => onTap(c, f) : undefined} />
   )
 
@@ -1013,13 +1018,18 @@ function Fretboard(props: FretboardProps) {
 }
 
 /* 無障礙文字替代：指板與和弦圖是圖形，VoiceOver 需要用文字說出位置與音名 */
-const STRING_ORDINAL_ZH: readonly string[] = ["六", "五", "四", "三", "二", "一"] // c = 0 → 第六弦
-const describePosition = (c: number, fret: number, nm: (pc: number) => string): string =>
-  `${fret === 0 ? "空弦" : `第 ${fret} 格`}，第${STRING_ORDINAL_ZH[c]}弦，音名 ${nm(OPEN_STRINGS[c] + fret)}`
-const describeVoicing = (frets: readonly Fret[], nm: (pc: number) => string): string =>
+const STRING_MESSAGE: readonly MessageKey[] = [
+  "a11y.string.6", "a11y.string.5", "a11y.string.4", "a11y.string.3", "a11y.string.2", "a11y.string.1",
+] // c = 0 → 第六弦
+const describePosition = (c: number, fret: number, nm: (pc: number) => string, t: Translate): string =>
+  t("a11y.position", {
+    where: fret === 0 ? t("a11y.openString") : t("a11y.fret", { fret }),
+    string: t(STRING_MESSAGE[c]), note: nm(OPEN_STRINGS[c] + fret),
+  })
+const describeVoicing = (frets: readonly Fret[], nm: (pc: number) => string, t: Translate): string =>
   frets.map((f, c) => (f === null
-    ? `第${STRING_ORDINAL_ZH[c]}弦悶音`
-    : describePosition(c, f, nm))).join("；")
+    ? t("a11y.muted", { string: t(STRING_MESSAGE[c]) })
+    : describePosition(c, f, nm, t))).join(t("a11y.separator"))
 
 /* 由「指法」換算成指板元件需要的資料 */
 interface BoardModel {
@@ -1078,9 +1088,9 @@ const boardFromSpec = (
 }
 
 function ChordBoard(props: {
-  spec: DiagramSpec; prefs: DiagramPrefs; nm: (pc: PitchClass) => string; width?: number
+  spec: DiagramSpec; prefs: DiagramPrefs; nm: (pc: PitchClass) => string; width?: number; t: Translate
 }) {
-  const { spec, prefs, nm, width } = props
+  const { spec, prefs, nm, width, t } = props
   const fretsKey = spec.frets.join(",")
   const fingersKey = spec.fingers ? spec.fingers.join(",") : ""
   const barKey = spec.barre ? `${spec.barre.fret}:${spec.barre.from}:${spec.barre.to}` : ""
@@ -1092,8 +1102,8 @@ function ChordBoard(props: {
   )
   return (
     <Fretboard startFret={m.startFret} rows={m.rows} marks={m.marks} bar={m.bar}
-      nutMarks={m.nutMarks} names={m.names} prefs={prefs} width={width}
-      label={`和弦指法：${describeVoicing(spec.frets, noteName(prefs.accidental === "flat"))}`} />
+      nutMarks={m.nutMarks} names={m.names} prefs={prefs} width={width} t={t}
+      label={t("a11y.chordVoicing", { text: describeVoicing(spec.frets, noteName(prefs.accidental === "flat"), t) })} />
   )
 }
 
@@ -1446,7 +1456,7 @@ function chordDetailRows(p: {
     rows.push(
       <VStack key={`v${i}`} alignment="leading" spacing={6}>
         <Text font="headline">{voicingTitle(v, t)}</Text>
-        <ChordBoard spec={{ frets: v.frets, root }} prefs={prefs} nm={nm} width={width} />
+        <ChordBoard spec={{ frets: v.frets, root }} prefs={prefs} nm={nm} width={width} t={t} />
         {prefs.soundOn ? <ChordPlayButtons frets={v.frets} prefs={prefs} t={t} /> : null}
       </VStack>,
     )
@@ -1471,7 +1481,7 @@ function ChordCard(props: {
     <VStack spacing={8}>
       <Text font="largeTitle" fontWeight="bold">{practiceChordName(flats)(voicing.chord)}</Text>
       <Text font="subheadline" foregroundStyle="secondaryLabel">{describe(voicing, t)}</Text>
-      <ChordBoard spec={spec} prefs={prefs} nm={noteName(flats)} width={width} />
+      <ChordBoard spec={spec} prefs={prefs} nm={noteName(flats)} width={width} t={t} />
       {legend ? (
         <Text font="caption" foregroundStyle="secondaryLabel">{legend}</Text>
       ) : null}
@@ -2114,6 +2124,7 @@ const scaleUsesFlats = (prefs: DiagramPrefs, root: PitchClass, scale: ScaleDef):
 }
 
 interface DrillProps {
+  readonly t: Translate
   readonly prefs: DiagramPrefs
   readonly layout: Layout
   readonly mode: DrillMode          // 找音或認音，由音階分頁的頁面決定
@@ -2125,7 +2136,7 @@ interface DrillProps {
   readonly onScalePosition: (v: ScalePositionFilter) => void
 }
 
-function FretboardDrill({ prefs, layout, mode, root, scaleIdx, scalePosition, onRoot, onScale, onScalePosition }: DrillProps) {
+function FretboardDrill({ t, prefs, layout, mode, root, scaleIdx, scalePosition, onRoot, onScale, onScalePosition }: DrillProps) {
   const [session, setSession] = useState<DrillSession>(() =>
     newDrillSession(root, scaleIdx, scalePosition, mode, Date.now() | 0))
   const initialDrill = useMemo(() => drillRepository.load(), [])
@@ -2205,6 +2216,7 @@ function FretboardDrill({ prefs, layout, mode, root, scaleIdx, scalePosition, on
       </Text>
 
       <Fretboard
+        t={t}
         startFret={q.zone.fromFret}
         rows={q.zone.toFret - q.zone.fromFret + 1}
         marks={marks}
@@ -2356,6 +2368,7 @@ const scaleMarks = (
 
 /* ③ UI */
 interface ScaleExplorerProps {
+  readonly t: Translate
   readonly prefs: DiagramPrefs
   readonly layout: Layout
   readonly root: PitchClass         // 與找音、認音共用
@@ -2394,7 +2407,7 @@ function scalePickers(p: {
   ]
 }
 
-function ScaleExplorer({ prefs, layout, root, scaleIdx, scalePosition, onRoot, onScale, onScalePosition }: ScaleExplorerProps) {
+function ScaleExplorer({ t, prefs, layout, root, scaleIdx, scalePosition, onRoot, onScale, onScalePosition }: ScaleExplorerProps) {
   const [customStart, setStartFret] = useState<number>(DEFAULT_SCALE.startFret)
   const [customRows, setRows] = useState<number>(layout.defaultScaleRows)
   const pr = scalePosition === 0 ? null : scalePositionRange(scalePosition, root)
@@ -2499,7 +2512,7 @@ function ScaleExplorer({ prefs, layout, root, scaleIdx, scalePosition, onRoot, o
         <Section key="board" header={<Text>{`${nm(root)} ${scale.label}${scalePosition === 0 ? "" : `・把位 ${scalePosition}`}・第 ${startFret}–${lastFret} 格`}</Text>}>
           <HStack>
             <Spacer />
-            <Fretboard startFret={startFret} rows={rows} marks={marks} prefs={boardPrefs}
+            <Fretboard startFret={startFret} rows={rows} marks={marks} prefs={boardPrefs} t={t}
               width={layout.boardWidth}
               onTap={prefs.soundOn ? (c, fret) => playNote(c, fret) : undefined} />
             <Spacer />
@@ -2517,7 +2530,7 @@ function ScaleExplorer({ prefs, layout, root, scaleIdx, scalePosition, onRoot, o
  * ════════════════════════════════════════════════ */
 type ScaleTabPage = "browse" | "findNote" | "nameNote"
 
-function ScaleTab({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
+function ScaleTab({ prefs, layout, t }: { prefs: DiagramPrefs; layout: Layout; t: Translate }) {
   const [page, setPage] = useState<ScaleTabPage>("browse")
   // 三個頁面共用主音、音階類型與 把位
   const [root, setRoot] = useState<PitchClass>(DEFAULT_SCALE.root)
@@ -2538,10 +2551,10 @@ function ScaleTab({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
         <Text tag="nameNote">認音</Text>
       </Picker>
       {page === "browse"
-        ? <ScaleExplorer prefs={prefs} layout={layout}
+        ? <ScaleExplorer prefs={prefs} layout={layout} t={t}
             root={root} scaleIdx={scaleIdx} scalePosition={scalePosition}
             onRoot={(v: number) => setRoot(mod12(v))} onScale={setScaleIdx} onScalePosition={setScalePosition} />
-        : <FretboardDrill prefs={prefs} layout={layout} mode={page}
+        : <FretboardDrill prefs={prefs} layout={layout} t={t} mode={page}
             root={root} scaleIdx={scaleIdx} scalePosition={scalePosition === 0 ? 1 : scalePosition}
             onRoot={(v: number) => setRoot(mod12(v))} onScale={setScaleIdx} onScalePosition={setScalePosition} />}
     </VStack>
@@ -2582,31 +2595,31 @@ const parsePick = (pattern: string): PickRole[][] =>
   pattern.split(" ").filter((t) => t.length > 0)
     .map((t) => (t === "-" ? [] : t.split("+").filter(isPickRole)))
 
-interface StrumTemplate { readonly key: string; readonly label: string; readonly beats: number; readonly pattern: string; readonly hint: string }
-interface PickTemplate { readonly key: string; readonly label: string; readonly beats: number; readonly pattern: string; readonly hint: string }
+interface StrumTemplate { readonly key: string; readonly labelKey: MessageKey; readonly beats: number; readonly pattern: string; readonly hintKey: MessageKey }
+interface PickTemplate { readonly key: string; readonly labelKey: MessageKey; readonly beats: number; readonly pattern: string; readonly hintKey: MessageKey }
 
 const STRUM_TEMPLATES: readonly StrumTemplate[] = [
-  { key: "down4", label: "四分全下", beats: 4, pattern: "D-D-D-D-", hint: "每拍只刷一下，最適合剛開始練換和弦。" },
-  { key: "eighthDown", label: "八分全下", beats: 4, pattern: "DDDDDDDD", hint: "每個八分音符都往下刷，力道穩定，適合快歌。" },
-  { key: "alt", label: "下上交替", beats: 4, pattern: "DUDUDUDU", hint: "手臂持續擺動、下上不間斷，是所有刷法的基礎。" },
-  { key: "folk", label: "民謠經典", beats: 4, pattern: "D-DU-UDU", hint: "「下、下上、上下上」，最常見的民謠刷法。" },
-  { key: "pop", label: "流行輕快", beats: 4, pattern: "D-DUDUDU", hint: "前半拍下刷、後半拍上刷，輕快有推進感。" },
-  { key: "ballad", label: "慢情歌", beats: 4, pattern: "D--U-UDU", hint: "留白多、強弱分明，適合慢歌與抒情曲。" },
-  { key: "rock", label: "搖滾紮實", beats: 4, pattern: "D-DUD-DU", hint: "第 3 拍再加重下刷，節奏更紮實。" },
-  { key: "funk", label: "切音放克", beats: 4, pattern: "DXUXDXUX", hint: "×＝右手照常刷、左手放鬆壓住弦，刷出沒有音高的悶音，製造打擊感。" },
-  { key: "reggae", label: "雷鬼反拍", beats: 4, pattern: "-U-U-U-U", hint: "只刷反拍（&），重音落在後半拍。" },
-  { key: "waltz", label: "華爾茲基本", beats: 3, pattern: "D-D-D-", hint: "每拍一下，強弱弱的三拍子。" },
-  { key: "waltzFolk", label: "華爾茲民謠", beats: 3, pattern: "D-DUDU", hint: "第 1 拍下刷，第 2、3 拍加入上刷，更有搖擺感。" },
+  { key: "down4", labelKey: "rhythm.strum.down4", beats: 4, pattern: "D-D-D-D-", hintKey: "rhythm.strum.down4.hint" },
+  { key: "eighthDown", labelKey: "rhythm.strum.eighthDown", beats: 4, pattern: "DDDDDDDD", hintKey: "rhythm.strum.eighthDown.hint" },
+  { key: "alt", labelKey: "rhythm.strum.alt", beats: 4, pattern: "DUDUDUDU", hintKey: "rhythm.strum.alt.hint" },
+  { key: "folk", labelKey: "rhythm.strum.folk", beats: 4, pattern: "D-DU-UDU", hintKey: "rhythm.strum.folk.hint" },
+  { key: "pop", labelKey: "rhythm.strum.pop", beats: 4, pattern: "D-DUDUDU", hintKey: "rhythm.strum.pop.hint" },
+  { key: "ballad", labelKey: "rhythm.strum.ballad", beats: 4, pattern: "D--U-UDU", hintKey: "rhythm.strum.ballad.hint" },
+  { key: "rock", labelKey: "rhythm.strum.rock", beats: 4, pattern: "D-DUD-DU", hintKey: "rhythm.strum.rock.hint" },
+  { key: "funk", labelKey: "rhythm.strum.funk", beats: 4, pattern: "DXUXDXUX", hintKey: "rhythm.strum.funk.hint" },
+  { key: "reggae", labelKey: "rhythm.strum.reggae", beats: 4, pattern: "-U-U-U-U", hintKey: "rhythm.strum.reggae.hint" },
+  { key: "waltz", labelKey: "rhythm.strum.waltz", beats: 3, pattern: "D-D-D-", hintKey: "rhythm.strum.waltz.hint" },
+  { key: "waltzFolk", labelKey: "rhythm.strum.waltzFolk", beats: 3, pattern: "D-DUDU", hintKey: "rhythm.strum.waltzFolk.hint" },
 ]
 
 const PICK_TEMPLATES: readonly PickTemplate[] = [
-  { key: "arp8", label: "經典琶音", beats: 4, pattern: "B 3 2 1 2 3 2 1", hint: "p-i-m-a-m-i-m-a：由低到高再折返，最基礎的分解和弦。" },
-  { key: "travis", label: "交替低音（Travis）", beats: 4, pattern: "B 3 A 2 B 3 A 1", hint: "拇指在兩條低音弦間交替，手指在反拍撥高音，是民謠、鄉村的招牌。" },
-  { key: "folkSwing", label: "民謠搖擺", beats: 4, pattern: "B 3 2 3 A 3 2 3", hint: "低音在第 1、3 拍，中間以 3、2 弦來回，穩定好上手。" },
-  { key: "pinch", label: "夾撥", beats: 4, pattern: "B+1 - 2+3 - A+1 - 2+3 -", hint: "低音與 1 弦同時撥（夾撥），再以兩指同時撥 2、3 弦。" },
-  { key: "ballad", label: "抒情分解", beats: 4, pattern: "B - 3 2 1 2 3 -", hint: "留一拍空隙，聽起來比較鬆、比較柔。" },
-  { key: "arp3", label: "三拍琶音", beats: 3, pattern: "B 3 2 1 2 3", hint: "p-i-m-a-m-i，適合三拍子的慢歌。" },
-  { key: "waltzPick", label: "華爾茲低音＋和弦", beats: 3, pattern: "B - 3+2+1 - 3+2+1 -", hint: "拇指彈低音，接著兩次高音弦同時撥。" },
+  { key: "arp8", labelKey: "rhythm.pick.arp8", beats: 4, pattern: "B 3 2 1 2 3 2 1", hintKey: "rhythm.pick.arp8.hint" },
+  { key: "travis", labelKey: "rhythm.pick.travis", beats: 4, pattern: "B 3 A 2 B 3 A 1", hintKey: "rhythm.pick.travis.hint" },
+  { key: "folkSwing", labelKey: "rhythm.pick.folkSwing", beats: 4, pattern: "B 3 2 3 A 3 2 3", hintKey: "rhythm.pick.folkSwing.hint" },
+  { key: "pinch", labelKey: "rhythm.pick.pinch", beats: 4, pattern: "B+1 - 2+3 - A+1 - 2+3 -", hintKey: "rhythm.pick.pinch.hint" },
+  { key: "ballad", labelKey: "rhythm.pick.ballad", beats: 4, pattern: "B - 3 2 1 2 3 -", hintKey: "rhythm.pick.ballad.hint" },
+  { key: "arp3", labelKey: "rhythm.pick.arp3", beats: 3, pattern: "B 3 2 1 2 3", hintKey: "rhythm.pick.arp3.hint" },
+  { key: "waltzPick", labelKey: "rhythm.pick.waltzPick", beats: 3, pattern: "B - 3+2+1 - 3+2+1 -", hintKey: "rhythm.pick.waltzPick.hint" },
 ]
 
 const firstStrum = (beats: number): StrumTemplate =>
@@ -2638,10 +2651,8 @@ const hintForNotation = (hint: string, n: FingerNotation): string =>
       .replace("p-i-m-a-m-i-m-a", "T-1-2-3-2-1-2-3")
       .replace("p-i-m-a-m-i", "T-1-2-3-2-1")
 
-const notationLegend = (n: FingerNotation): string =>
-  n === "pima"
-    ? "橘色＝低音（拇指 p）、其餘＝高音弦（i 食指＝3 弦、m 中指＝2 弦、a 無名指＝1 弦）。"
-    : "橘色＝低音（拇指 T）、其餘＝高音弦（1 食指＝3 弦、2 中指＝2 弦、3 無名指＝1 弦）。"
+const notationLegend = (n: FingerNotation, t: Translate): string =>
+  t(n === "pima" ? "rhythm.legend.pima" : "rhythm.legend.t123")
 
 /* ── 刷弦：型態 × 和弦 → 音符事件 ── */
 const strokeVelocity = (s: Stroke, slot: number): number => {
@@ -2726,30 +2737,26 @@ interface PlayPlan {
   readonly pattern: RhythmPattern
   readonly bpm: number
   readonly barsPerChord: number
-  readonly repeats: number
+  readonly loop: boolean // true＝一圈無限循環，直到按停止
 }
-const MAX_PLAY_SECONDS = 90 // 限制整段長度，避免渲染過久或檔案過大
 
 const slotSeconds = (bpm: number): number => 30 / bpm // 八分音符
 const planBarSeconds = (p: PlayPlan): number => slotCount(p.pattern) * slotSeconds(p.bpm)
 const planPassSeconds = (p: PlayPlan): number => p.chords.length * p.barsPerChord * planBarSeconds(p)
-const effectiveRepeats = (p: PlayPlan): number =>
-  Math.max(1, Math.min(p.repeats, Math.floor(MAX_PLAY_SECONDS / Math.max(planPassSeconds(p), 1))))
-const runSeconds = (p: PlayPlan): number => effectiveRepeats(p) * planPassSeconds(p)
+// 播放總長（秒）；循環時沒有終點
+const runSeconds = (p: PlayPlan): number => (p.loop ? Infinity : planPassSeconds(p))
 
 const planEvents = (p: PlayPlan): NoteEvent[] => {
   const bar = planBarSeconds(p)
   const slot = slotSeconds(p.bpm)
   const slots = slotCount(p.pattern)
-  return range(effectiveRepeats(p)).flatMap((r) =>
-    p.chords.flatMap((frets, i) => {
-      const spanStart = (r * p.chords.length + i) * p.barsPerChord * bar
-      const spanEnd = spanStart + p.barsPerChord * bar
-      return range(p.barsPerChord).flatMap((b) =>
-        range(slots).flatMap((k) =>
-          patternSlotEvents(p.pattern, frets, k, spanStart + b * bar + k * slot, slot, spanEnd)))
-    }),
-  )
+  return p.chords.flatMap((frets, i) => {
+    const spanStart = i * p.barsPerChord * bar
+    const spanEnd = spanStart + p.barsPerChord * bar
+    return range(p.barsPerChord).flatMap((b) =>
+      range(slots).flatMap((k) =>
+        patternSlotEvents(p.pattern, frets, k, spanStart + b * bar + k * slot, slot, spanEnd)))
+  })
 }
 
 interface Playhead { readonly chord: number; readonly slot: number }
@@ -2757,9 +2764,10 @@ const playheadAt = (p: PlayPlan, elapsed: number): Playhead | null => {
   if (elapsed < 0) return null
   const idx = Math.floor(elapsed / slotSeconds(p.bpm))
   const slots = slotCount(p.pattern)
-  const total = effectiveRepeats(p) * p.chords.length * p.barsPerChord * slots
-  if (idx >= total) return null
-  return { chord: Math.floor(idx / (p.barsPerChord * slots)) % p.chords.length, slot: idx % slots }
+  const total = p.chords.length * p.barsPerChord * slots
+  if (total === 0 || (!p.loop && idx >= total)) return null
+  const i = idx % total
+  return { chord: Math.floor(i / (p.barsPerChord * slots)), slot: i % slots }
 }
 
 /* ── 指彈圖：把角色換算成「第幾格 × 第幾弦」的指法（pima 或 T123） ── */
@@ -2780,7 +2788,9 @@ const pickCells = (
 const BPM_MIN = 40
 const BPM_MAX = 200
 const clampBpm = (n: number): number => Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(n)))
-const REPEAT_OPTIONS: readonly number[] = [1, 2, 4]
+// 播放小節數：1 小節、2 小節，或無限循環
+type BarsOption = 1 | 2 | "loop"
+const barsOptionOf = (v: unknown): BarsOption => (v === 2 ? 2 : v === "loop" ? "loop" : 1)
 
 interface RhythmSettings {
   kind: RhythmKind
@@ -2794,15 +2804,14 @@ interface RhythmSettings {
   chordBass: number        // on 低音；-1 = 不指定
   scope: Scope             // 指法範圍：開放／封閉／全部
   voicingIdx: number       // 在該範圍的按法清單中選用第幾個
-  bars: number             // 播放幾小節
-  repeats: number          // 重複幾遍
+  bars: BarsOption         // 播放幾小節，或無限循環
 }
 const DEFAULT_RHYTHM: RhythmSettings = {
   kind: "strum", beats: 4,
   strumPattern: firstStrum(4).pattern, pickKey: firstPick(4).key,
   notation: "pima",
   bpm: 80, chordRoot: mod12(0), chordQuality: "maj", chordBass: -1,
-  scope: "open", voicingIdx: 0, bars: 1, repeats: 2,
+  scope: "open", voicingIdx: 0, bars: 1,
 }
 
 const validStrum = (p: unknown, beats: number): p is string =>
@@ -2817,7 +2826,9 @@ const slotWidthFor = (available: number, count: number, lead: number): number =>
   clamp(Math.floor((available - lead) / Math.max(1, count)), SLOT_MIN, SLOT_MAX)
 
 const STROKE_GLYPH: Record<Stroke, string> = { D: "↓", U: "↑", X: "×", "-": "·" }
-const STROKE_NAME_ZH: Record<Stroke, string> = { D: "下刷", U: "上刷", X: "悶音切刷", "-": "休止" }
+const STROKE_MESSAGE: Readonly<Record<Stroke, MessageKey>> = {
+  D: "stroke.D", U: "stroke.U", X: "stroke.X", "-": "stroke.rest",
+}
 
 function BeatHeader(props: { count: number; lead: number; slotW: number }) {
   const { count, lead, slotW } = props
@@ -2833,9 +2844,10 @@ function BeatHeader(props: { count: number; lead: number; slotW: number }) {
 }
 
 function StrumCell(props: {
-  stroke: Stroke; index: number; active: boolean; pal: Palette; slotW: number; onTap: () => void
+  stroke: Stroke; index: number; active: boolean; pal: Palette; slotW: number; t: Translate
+  onTap: () => void
 }) {
-  const { stroke, index, active, pal, slotW, onTap } = props
+  const { stroke, index, active, pal, slotW, t, onTap } = props
   const rest = stroke === "-"
   return (
     <ZStack frame={{ width: slotW, height: 56 }}>
@@ -2846,17 +2858,18 @@ function StrumCell(props: {
       <Text font="title2" fontWeight="bold"
         foregroundStyle={rest ? "secondaryLabel" : "label"}>{STROKE_GLYPH[stroke]}</Text>
       <Rectangle fill="systemBackground" opacity={0.01}
-        accessibilityLabel={`第 ${index + 1} 格，${STROKE_NAME_ZH[stroke]}`}
-        accessibilityHint="輕點切換刷法" accessibilityAddTraits="isButton"
+        accessibilityLabel={t("a11y.strumCell", { n: index + 1, stroke: t(STROKE_MESSAGE[stroke]) })}
+        accessibilityHint={t("a11y.strumHint")} accessibilityAddTraits="isButton"
         frame={{ width: slotW, height: 56 }} onTapGesture={onTap} />
     </ZStack>
   )
 }
 
 function StrumGrid(props: {
-  strokes: readonly Stroke[]; current: number; prefs: DiagramPrefs; width: number; onTap: (i: number) => void
+  strokes: readonly Stroke[]; current: number; prefs: DiagramPrefs; width: number; t: Translate
+  onTap: (i: number) => void
 }) {
-  const { strokes, current, prefs, width, onTap } = props
+  const { strokes, current, prefs, width, t, onTap } = props
   const pal = PALETTES[prefs.palette]
   const slotW = slotWidthFor(width, strokes.length, 0)
   return (
@@ -2864,7 +2877,7 @@ function StrumGrid(props: {
       <BeatHeader count={strokes.length} lead={0} slotW={slotW} />
       <HStack spacing={0}>
         {strokes.map((s, i) => (
-          <StrumCell key={i} stroke={s} index={i} active={i === current} pal={pal} slotW={slotW}
+          <StrumCell key={i} stroke={s} index={i} active={i === current} pal={pal} slotW={slotW} t={t}
             onTap={() => onTap(i)} />
         ))}
       </HStack>
@@ -2879,8 +2892,9 @@ function PickGrid(props: {
   notation: FingerNotation
   prefs: DiagramPrefs
   width: number
+  t: Translate
 }) {
-  const { slots, frets, current, notation, prefs, width } = props
+  const { slots, frets, current, notation, prefs, width, t } = props
   const pal = PALETTES[prefs.palette]
   const LABEL_W = 22
   const ROW_H = width >= 560 ? 32 : 28 // 只有 iPad 的指板寬度會 ≥ 560
@@ -2893,7 +2907,7 @@ function PickGrid(props: {
   return (
     <VStack spacing={0} dynamicTypeSize={BOARD_TYPE_SIZE}
       accessibilityElement="ignore"
-      accessibilityLabel={`指彈圖，共 ${slots.length} 格；目前和弦指法：${describeVoicing(frets, noteName(prefs.accidental === "flat"))}`}>
+      accessibilityLabel={t("a11y.pickGrid", { n: slots.length, text: describeVoicing(frets, noteName(prefs.accidental === "flat"), t) })}>
       <BeatHeader count={slots.length} lead={LABEL_W} slotW={slotW} />
       {rows.map((c) => (
         <HStack key={c} spacing={0}>
@@ -2925,6 +2939,7 @@ function PickGrid(props: {
 
 interface RhythmTypeCtx {
   readonly s: RhythmSettings
+  readonly t: Translate
   readonly strumKey: string
   readonly strumTemplates: readonly StrumTemplate[]
   readonly pickTemplates: readonly PickTemplate[]
@@ -2933,36 +2948,36 @@ interface RhythmTypeCtx {
 }
 // 節奏型態：類型、拍號、模板與指法標示
 const rhythmTypeSection = (c: RhythmTypeCtx): JSX.Element => {
-  const { s, strumKey, strumTemplates, pickTemplates, patch, changeBeats } = c
+  const { s, t, strumKey, strumTemplates, pickTemplates, patch, changeBeats } = c
   return (
-    <Section key="type" header={<Text>節奏型態</Text>}>
-      <Picker title="類型" value={s.kind} pickerStyle="segmented"
+    <Section key="type" header={<Text>{t("rhythm.type")}</Text>}>
+      <Picker title={t("rhythm.kind")} value={s.kind} pickerStyle="segmented"
         onChanged={(v: string) => patch({ kind: v as RhythmKind })}>
-        <Text tag="strum">刷弦</Text>
-        <Text tag="pick">指彈</Text>
+        <Text tag="strum">{t("rhythm.kind.strum")}</Text>
+        <Text tag="pick">{t("rhythm.kind.pick")}</Text>
       </Picker>
-      <Picker title="拍號" value={s.beats} pickerStyle="segmented"
+      <Picker title={t("rhythm.timeSig")} value={s.beats} pickerStyle="segmented"
         onChanged={(v: number) => changeBeats(v)}>
         <Text tag={4}>4/4</Text>
         <Text tag={3}>3/4</Text>
       </Picker>
       {s.kind === "strum" ? (
-        <Picker title="模板" value={strumKey} pickerStyle="menu"
+        <Picker title={t("rhythm.template")} value={strumKey} pickerStyle="menu"
           onChanged={(v: string) => {
-            const t = strumTemplates.find((x) => x.key === v)
-            if (t) patch({ strumPattern: t.pattern })
+            const tpl = strumTemplates.find((x) => x.key === v)
+            if (tpl) patch({ strumPattern: tpl.pattern })
           }}>
-          {strumTemplates.map((t) => <Text key={t.key} tag={t.key}>{t.label}</Text>)}
-          {strumKey === "custom" ? <Text tag="custom">自訂</Text> : null}
+          {strumTemplates.map((x) => <Text key={x.key} tag={x.key}>{t(x.labelKey)}</Text>)}
+          {strumKey === "custom" ? <Text tag="custom">{t("rhythm.custom")}</Text> : null}
         </Picker>
       ) : (
-        <Picker title="模板" value={s.pickKey} pickerStyle="menu"
+        <Picker title={t("rhythm.template")} value={s.pickKey} pickerStyle="menu"
           onChanged={(v: string) => patch({ pickKey: v })}>
-          {pickTemplates.map((t) => <Text key={t.key} tag={t.key}>{t.label}</Text>)}
+          {pickTemplates.map((x) => <Text key={x.key} tag={x.key}>{t(x.labelKey)}</Text>)}
         </Picker>
       )}
       {s.kind === "pick" ? (
-        <Picker title="指法標示" value={s.notation} pickerStyle="segmented"
+        <Picker title={t("rhythm.notation")} value={s.notation} pickerStyle="segmented"
           onChanged={(v: string) => { if (isFingerNotation(v)) patch({ notation: v }) }}>
           <Text tag="pima">p i m a</Text>
           <Text tag="t123">T 1 2 3</Text>
@@ -2974,22 +2989,24 @@ const rhythmTypeSection = (c: RhythmTypeCtx): JSX.Element => {
 
 interface RhythmPlayCtx {
   readonly s: RhythmSettings
+  readonly t: Translate
   readonly playSeconds: number
-  readonly capped: boolean
   readonly canPlay: boolean
   readonly nudgeBpm: (delta: number) => void
   readonly patch: (p: Partial<RhythmSettings>) => void
   readonly play: () => Promise<void>
   readonly stop: () => void
 }
-// 播放：速度微調、小節數與重複、播放與停止
+// 播放：速度微調、小節數（1、2 或無限循環）、播放與停止
 const rhythmPlaySection = (c: RhythmPlayCtx): JSX.Element => {
-  const { s, playSeconds, capped, canPlay, nudgeBpm, patch, play, stop } = c
+  const { s, t, playSeconds, canPlay, nudgeBpm, patch, play, stop } = c
   return (
-    <Section key="play" header={<Text>播放</Text>}
-      footer={<Text>{`約 ${playSeconds} 秒${capped ? "（重複次數已自動縮減，避免過長）" : ""}。以下方選用的和弦與指法伴奏。調整速度會停止目前的播放。`}</Text>}>
+    <Section key="play" header={<Text>{t("rhythm.play")}</Text>}
+      footer={<Text>{s.bars === "loop"
+        ? t("rhythm.play.footer.loop")
+        : t("rhythm.play.footer", { seconds: playSeconds })}</Text>}>
       <HStack>
-        <Text>速度</Text>
+        <Text>{t("rhythm.tempo")}</Text>
         <Spacer />
         <Text font="headline">{`${s.bpm} BPM`}</Text>
       </HStack>
@@ -3008,20 +3025,17 @@ const rhythmPlaySection = (c: RhythmPlayCtx): JSX.Element => {
           lineLimit={1} fixedSize={true}
           disabled={s.bpm >= BPM_MAX} action={() => nudgeBpm(10)} />
       </HStack>
-      <Picker title="小節數" value={s.bars} pickerStyle="segmented"
-        onChanged={(v: number) => patch({ bars: v })}>
-        <Text tag={1}>1 小節</Text>
-        <Text tag={2}>2 小節</Text>
-      </Picker>
-      <Picker title="重複" value={s.repeats} pickerStyle="segmented"
-        onChanged={(v: number) => patch({ repeats: v })}>
-        {REPEAT_OPTIONS.map((n) => <Text key={n} tag={n}>{`${n} 遍`}</Text>)}
+      <Picker title={t("rhythm.bars")} value={s.bars} pickerStyle="segmented"
+        onChanged={(v: number | string) => patch({ bars: barsOptionOf(v) })}>
+        <Text tag={1}>{t("rhythm.bars.one")}</Text>
+        <Text tag={2}>{t("rhythm.bars.two")}</Text>
+        <Text tag="loop">{t("rhythm.bars.loop")}</Text>
       </Picker>
       <HStack spacing={8}>
-        <Button title="▶ 播放" buttonStyle="borderedProminent"
+        <Button title={t("rhythm.playBtn")} buttonStyle="borderedProminent"
           lineLimit={1} fixedSize={true}
           disabled={!canPlay} action={() => { void play() }} />
-        <Button title="■ 停止" buttonStyle="bordered"
+        <Button title={t("rhythm.stopBtn")} buttonStyle="bordered"
           lineLimit={1} fixedSize={true}
           action={stop} />
       </HStack>
@@ -3031,6 +3045,7 @@ const rhythmPlaySection = (c: RhythmPlayCtx): JSX.Element => {
 
 interface RhythmGridCtx {
   readonly s: RhythmSettings
+  readonly t: Translate
   readonly prefs: DiagramPrefs
   readonly bw: number
   readonly pattern: RhythmPattern
@@ -3042,19 +3057,19 @@ interface RhythmGridCtx {
 }
 // 節奏圖（刷法或指彈）
 const rhythmGridSection = (c: RhythmGridCtx): JSX.Element => {
-  const { s, prefs, bw, pattern, currentSlot, frets, gridHint, gridLegend, tapStroke } = c
+  const { s, t, prefs, bw, pattern, currentSlot, frets, gridHint, gridLegend, tapStroke } = c
   return (
-    <Section key="grid" header={<Text>{`${s.kind === "strum" ? "刷法" : "指法"}・${s.beats}/4 拍・每格 = 八分音符`}</Text>}
+    <Section key="grid" header={<Text>{t(s.kind === "strum" ? "rhythm.grid.strum" : "rhythm.grid.pick", { beats: s.beats })}</Text>}
       footer={<Text>{gridLegend}</Text>}>
       <HStack>
         <Spacer />
         {s.kind === "strum" && pattern.kind === "strum" ? (
           <StrumGrid strokes={pattern.strokes} current={currentSlot} prefs={prefs}
-            width={bw} onTap={tapStroke} />
+            width={bw} t={t} onTap={tapStroke} />
         ) : null}
         {s.kind === "pick" && pattern.kind === "pick" ? (
           <PickGrid slots={pattern.slots} frets={frets} current={currentSlot}
-            notation={s.notation} prefs={prefs} width={bw} />
+            notation={s.notation} prefs={prefs} width={bw} t={t} />
         ) : null}
         <Spacer />
       </HStack>
@@ -3113,7 +3128,7 @@ const rhythmChordSections = (c: RhythmChordCtx): JSX.Element[] => {
             systemImage={i === chosenIdx ? "checkmark.circle.fill" : "circle"}
             action={() => chooseVoicing(i)} />
           <ChordBoard spec={{ frets: v.frets, root: s.chordRoot }} prefs={prefs}
-            nm={noteName(naming.flats)} width={bw} />
+            nm={noteName(naming.flats)} width={bw} t={t} />
         </VStack>
       ))}
     </Section>,
@@ -3169,13 +3184,13 @@ function RhythmStudio({ prefs, active, layout, t }: { prefs: DiagramPrefs; activ
 
   // 離開這個分頁、或改了任何會影響聲音的設定時，停止播放
   // （指法表示法 notation 只影響畫面，不會中斷播放）
-  useEffect(() => { if (!active) { ticket.current++; setRun(null) } }, [active])
+  useEffect(() => { if (!active) { ticket.current++; synth.stop(); setRun(null) } }, [active])
   useEffect(() => {
     ticket.current++
     synth.stop()
     setRun(null)
   }, [s.kind, s.beats, s.strumPattern, s.pickKey, s.bpm, s.chordRoot, s.chordQuality, s.chordBass,
-    s.scope, s.voicingIdx, s.bars, s.repeats])
+    s.scope, s.voicingIdx, s.bars])
 
   usePlaybackClock(run, setNow, () => setRun(null))
 
@@ -3205,11 +3220,12 @@ function RhythmStudio({ prefs, active, layout, t }: { prefs: DiagramPrefs; activ
   )
 
   /* ── 播放計畫與游標 ── */
+  const looping = s.bars === "loop"
   const plan: PlayPlan = {
-    chords: chosen ? [frets] : [], pattern, bpm: s.bpm, barsPerChord: s.bars, repeats: s.repeats,
+    chords: chosen ? [frets] : [], pattern, bpm: s.bpm,
+    barsPerChord: s.bars === "loop" ? 1 : s.bars, loop: looping, // 循環時以 1 小節為一圈
   }
-  const playSeconds = Math.round(runSeconds(plan))
-  const capped = effectiveRepeats(plan) < s.repeats
+  const playSeconds = looping ? 0 : Math.round(planPassSeconds(plan))
 
   const head = run ? playheadAt(run.plan, (now - run.startedAt) / 1000) : null
   const currentSlot = head ? head.slot : -1
@@ -3220,11 +3236,11 @@ function RhythmStudio({ prefs, active, layout, t }: { prefs: DiagramPrefs; activ
     haptic(prefs, "light")
     const mine = ++ticket.current
     setRun(null)
-    await synth.playEvents(planEvents(plan))
+    await synth.playEvents(planEvents(plan), looping ? planPassSeconds(plan) : undefined)
     if (mine !== ticket.current) return
-    const t = Date.now() + 120 // 音訊從準備好到真正出聲約有一點延遲
-    setNow(t)
-    setRun({ startedAt: t, plan })
+    const startedAt = Date.now() + 120 // 音訊從準備好到真正出聲約有一點延遲
+    setNow(startedAt)
+    setRun({ startedAt, plan })
   }
   const stop = () => { ticket.current++; synth.stop(); setRun(null) }
 
@@ -3258,24 +3274,22 @@ function RhythmStudio({ prefs, active, layout, t }: { prefs: DiagramPrefs; activ
   }
 
   const gridHint = s.kind === "strum"
-    ? (strumTpl ? strumTpl.hint : "自訂節奏：輕點一下格子，依 ↓ → ↑ → × → · 循環切換。")
-    : hintForNotation(pickTpl.hint, s.notation)
-  const gridLegend = s.kind === "strum"
-    ? "↓ 下刷　↑ 上刷　× 悶音切刷　· 休止符。輕點格子可直接修改。"
-    : notationLegend(s.notation)
+    ? (strumTpl ? t(strumTpl.hintKey) : t("rhythm.hint.custom"))
+    : hintForNotation(t(pickTpl.hintKey), s.notation)
+  const gridLegend = s.kind === "strum" ? t("rhythm.legend.strum") : notationLegend(s.notation, t)
 
   // 左欄：節奏型態、播放；右欄：節奏圖，最底是選擇和弦與指法圖
   const leftSections: JSX.Element[] = [
-    rhythmTypeSection({ s, strumKey, strumTemplates, pickTemplates, patch, changeBeats }),
+    rhythmTypeSection({ s, t, strumKey, strumTemplates, pickTemplates, patch, changeBeats }),
   ]
   if (prefs.soundOn) {
     leftSections.push(
-      rhythmPlaySection({ s, playSeconds, capped, canPlay: !!chosen, nudgeBpm, patch, play, stop }),
+      rhythmPlaySection({ s, t, playSeconds, canPlay: !!chosen, nudgeBpm, patch, play, stop }),
     )
   }
 
   const rightSections: JSX.Element[] = [
-    rhythmGridSection({ s, prefs, bw, pattern, currentSlot, frets, gridHint, gridLegend, tapStroke }),
+    rhythmGridSection({ s, t, prefs, bw, pattern, currentSlot, frets, gridHint, gridLegend, tapStroke }),
     ...rhythmChordSections({ s, prefs, bw, t, naming, voicings, chosenIdx, changeChord, chooseVoicing }),
   ]
 
@@ -3447,6 +3461,85 @@ const MESSAGES_ZH_TW = {
   "hub.progression": "進行",
   "hub.practice": "練習",
   "rhythm.voicings.footer": "點選指法即可選用；播放與指彈圖都使用打勾的指法。",
+  "rhythm.strum.down4": "四分全下",
+  "rhythm.strum.down4.hint": "每拍只刷一下，最適合剛開始練換和弦。",
+  "rhythm.strum.eighthDown": "八分全下",
+  "rhythm.strum.eighthDown.hint": "每個八分音符都往下刷，力道穩定，適合快歌。",
+  "rhythm.strum.alt": "下上交替",
+  "rhythm.strum.alt.hint": "手臂持續擺動、下上不間斷，是所有刷法的基礎。",
+  "rhythm.strum.folk": "民謠經典",
+  "rhythm.strum.folk.hint": "「下、下上、上下上」，最常見的民謠刷法。",
+  "rhythm.strum.pop": "流行輕快",
+  "rhythm.strum.pop.hint": "前半拍下刷、後半拍上刷，輕快有推進感。",
+  "rhythm.strum.ballad": "慢情歌",
+  "rhythm.strum.ballad.hint": "留白多、強弱分明，適合慢歌與抒情曲。",
+  "rhythm.strum.rock": "搖滾紮實",
+  "rhythm.strum.rock.hint": "第 3 拍再加重下刷，節奏更紮實。",
+  "rhythm.strum.funk": "切音放克",
+  "rhythm.strum.funk.hint": "×＝右手照常刷、左手放鬆壓住弦，刷出沒有音高的悶音，製造打擊感。",
+  "rhythm.strum.reggae": "雷鬼反拍",
+  "rhythm.strum.reggae.hint": "只刷反拍（&），重音落在後半拍。",
+  "rhythm.strum.waltz": "華爾茲基本",
+  "rhythm.strum.waltz.hint": "每拍一下，強弱弱的三拍子。",
+  "rhythm.strum.waltzFolk": "華爾茲民謠",
+  "rhythm.strum.waltzFolk.hint": "第 1 拍下刷，第 2、3 拍加入上刷，更有搖擺感。",
+  "rhythm.pick.arp8": "經典琶音",
+  "rhythm.pick.arp8.hint": "p-i-m-a-m-i-m-a：由低到高再折返，最基礎的分解和弦。",
+  "rhythm.pick.travis": "交替低音（Travis）",
+  "rhythm.pick.travis.hint": "拇指在兩條低音弦間交替，手指在反拍撥高音，是民謠、鄉村的招牌。",
+  "rhythm.pick.folkSwing": "民謠搖擺",
+  "rhythm.pick.folkSwing.hint": "低音在第 1、3 拍，中間以 3、2 弦來回，穩定好上手。",
+  "rhythm.pick.pinch": "夾撥",
+  "rhythm.pick.pinch.hint": "低音與 1 弦同時撥（夾撥），再以兩指同時撥 2、3 弦。",
+  "rhythm.pick.ballad": "抒情分解",
+  "rhythm.pick.ballad.hint": "留一拍空隙，聽起來比較鬆、比較柔。",
+  "rhythm.pick.arp3": "三拍琶音",
+  "rhythm.pick.arp3.hint": "p-i-m-a-m-i，適合三拍子的慢歌。",
+  "rhythm.pick.waltzPick": "華爾茲低音＋和弦",
+  "rhythm.pick.waltzPick.hint": "拇指彈低音，接著兩次高音弦同時撥。",
+  "rhythm.legend.pima": "橘色＝低音（拇指 p）、其餘＝高音弦（i 食指＝3 弦、m 中指＝2 弦、a 無名指＝1 弦）。",
+  "rhythm.legend.t123": "橘色＝低音（拇指 T）、其餘＝高音弦（1 食指＝3 弦、2 中指＝2 弦、3 無名指＝1 弦）。",
+  "rhythm.legend.strum": "↓ 下刷　↑ 上刷　× 悶音切刷　· 休止符。輕點格子可直接修改。",
+  "rhythm.hint.custom": "自訂節奏：輕點一下格子，依 ↓ → ↑ → × → · 循環切換。",
+  "rhythm.grid.strum": "刷法・{beats}/4 拍・每格 = 八分音符",
+  "rhythm.grid.pick": "指法・{beats}/4 拍・每格 = 八分音符",
+  "rhythm.type": "節奏型態",
+  "rhythm.kind": "類型",
+  "rhythm.kind.strum": "刷弦",
+  "rhythm.kind.pick": "指彈",
+  "rhythm.timeSig": "拍號",
+  "rhythm.template": "模板",
+  "rhythm.custom": "自訂",
+  "rhythm.notation": "指法標示",
+  "rhythm.play": "播放",
+  "rhythm.play.footer": "約 {seconds} 秒。以下方選用的和弦與指法伴奏。調整速度會停止目前的播放。",
+  "rhythm.play.footer.loop": "循環播放，按「停止」結束。以下方選用的和弦與指法伴奏。調整速度會停止目前的播放。",
+  "rhythm.tempo": "速度",
+  "rhythm.bars": "小節數",
+  "rhythm.bars.one": "1 小節",
+  "rhythm.bars.two": "2 小節",
+  "rhythm.bars.loop": "無限",
+  "rhythm.playBtn": "▶ 播放",
+  "rhythm.stopBtn": "■ 停止",
+  "a11y.string.1": "第一弦",
+  "a11y.string.2": "第二弦",
+  "a11y.string.3": "第三弦",
+  "a11y.string.4": "第四弦",
+  "a11y.string.5": "第五弦",
+  "a11y.string.6": "第六弦",
+  "a11y.openString": "空弦",
+  "a11y.fret": "第 {fret} 格",
+  "a11y.position": "{where}，{string}，音名 {note}",
+  "a11y.muted": "{string}悶音",
+  "a11y.separator": "；",
+  "a11y.chordVoicing": "和弦指法：{text}",
+  "a11y.pickGrid": "指彈圖，共 {n} 格；目前和弦指法：{text}",
+  "a11y.strumCell": "第 {n} 格，{stroke}",
+  "a11y.strumHint": "輕點切換刷法",
+  "stroke.D": "下刷",
+  "stroke.U": "上刷",
+  "stroke.X": "悶音切刷",
+  "stroke.rest": "休止",
 } as const
 type MessageKey = keyof typeof MESSAGES_ZH_TW
 type Messages = Readonly<Record<MessageKey, string>>
@@ -3589,6 +3682,85 @@ const MESSAGES_EN: Messages = {
   "hub.progression": "Progression",
   "hub.practice": "Practice",
   "rhythm.voicings.footer": "Tap a voicing to use it. Playback and the fingerstyle chart use the checked voicing.",
+  "rhythm.strum.down4": "Quarter-note downs",
+  "rhythm.strum.down4.hint": "One down-stroke per beat — best when you’re just starting to practice chord changes.",
+  "rhythm.strum.eighthDown": "Eighth-note downs",
+  "rhythm.strum.eighthDown.hint": "A down-stroke on every eighth note; steady and powerful, good for fast songs.",
+  "rhythm.strum.alt": "Alternating down-up",
+  "rhythm.strum.alt.hint": "Keep your arm swinging down and up without a break — the basis of every strumming pattern.",
+  "rhythm.strum.folk": "Classic folk",
+  "rhythm.strum.folk.hint": "“Down, down-up, up-down-up” — the most common folk pattern.",
+  "rhythm.strum.pop": "Light pop",
+  "rhythm.strum.pop.hint": "Down-strokes on the beat and up-strokes on the off-beat give it a bright, driving feel.",
+  "rhythm.strum.ballad": "Slow ballad",
+  "rhythm.strum.ballad.hint": "Plenty of space and clear accents; suits slow songs and ballads.",
+  "rhythm.strum.rock": "Solid rock",
+  "rhythm.strum.rock.hint": "An extra accented down-stroke on beat 3 makes the rhythm more solid.",
+  "rhythm.strum.funk": "Funk muting",
+  "rhythm.strum.funk.hint": "× = keep strumming with the right hand while the left hand lightly mutes the strings, giving a percussive, unpitched sound.",
+  "rhythm.strum.reggae": "Reggae off-beat",
+  "rhythm.strum.reggae.hint": "Strum only the off-beats (&), putting the accent on the second half of each beat.",
+  "rhythm.strum.waltz": "Basic waltz",
+  "rhythm.strum.waltz.hint": "One stroke per beat in a strong-weak-weak three-beat feel.",
+  "rhythm.strum.waltzFolk": "Folk waltz",
+  "rhythm.strum.waltzFolk.hint": "A down-stroke on beat 1, adding up-strokes on beats 2 and 3 for more sway.",
+  "rhythm.pick.arp8": "Classic arpeggio",
+  "rhythm.pick.arp8.hint": "p-i-m-a-m-i-m-a: from low to high and back — the most basic broken chord.",
+  "rhythm.pick.travis": "Alternating bass (Travis)",
+  "rhythm.pick.travis.hint": "The thumb alternates between two bass strings while the fingers pick high notes on the off-beats — a folk and country trademark.",
+  "rhythm.pick.folkSwing": "Folk swing",
+  "rhythm.pick.folkSwing.hint": "Bass on beats 1 and 3, with the 3rd and 2nd strings moving back and forth in between; steady and easy to learn.",
+  "rhythm.pick.pinch": "Pinch",
+  "rhythm.pick.pinch.hint": "Play the bass and the 1st string together (a pinch), then the 2nd and 3rd strings together with two fingers.",
+  "rhythm.pick.ballad": "Ballad arpeggio",
+  "rhythm.pick.ballad.hint": "Leave a beat of space for a looser, softer sound.",
+  "rhythm.pick.arp3": "Three-beat arpeggio",
+  "rhythm.pick.arp3.hint": "p-i-m-a-m-i, for slow songs in three.",
+  "rhythm.pick.waltzPick": "Waltz bass + chord",
+  "rhythm.pick.waltzPick.hint": "The thumb plays the bass, followed by two simultaneous high-string plucks.",
+  "rhythm.legend.pima": "Orange = bass (thumb p); the rest = treble strings (i index = 3rd string, m middle = 2nd string, a ring = 1st string).",
+  "rhythm.legend.t123": "Orange = bass (thumb T); the rest = treble strings (1 index = 3rd string, 2 middle = 2nd string, 3 ring = 1st string).",
+  "rhythm.legend.strum": "↓ down  ↑ up  × muted stroke  · rest. Tap a cell to edit it.",
+  "rhythm.hint.custom": "Custom pattern: tap a cell to cycle through ↓ → ↑ → × → ·.",
+  "rhythm.grid.strum": "Strum pattern · {beats}/4 · each cell = eighth note",
+  "rhythm.grid.pick": "Fingerstyle pattern · {beats}/4 · each cell = eighth note",
+  "rhythm.type": "Rhythm Style",
+  "rhythm.kind": "Type",
+  "rhythm.kind.strum": "Strum",
+  "rhythm.kind.pick": "Fingerstyle",
+  "rhythm.timeSig": "Time Signature",
+  "rhythm.template": "Template",
+  "rhythm.custom": "Custom",
+  "rhythm.notation": "Finger Labels",
+  "rhythm.play": "Playback",
+  "rhythm.play.footer": "About {seconds} seconds. Plays with the chord and voicing chosen below. Changing the tempo stops playback.",
+  "rhythm.play.footer.loop": "Loops until you press Stop. Plays with the chord and voicing chosen below. Changing the tempo stops playback.",
+  "rhythm.tempo": "Tempo",
+  "rhythm.bars": "Bars",
+  "rhythm.bars.one": "1 bar",
+  "rhythm.bars.two": "2 bars",
+  "rhythm.bars.loop": "Loop",
+  "rhythm.playBtn": "▶ Play",
+  "rhythm.stopBtn": "■ Stop",
+  "a11y.string.1": "string 1",
+  "a11y.string.2": "string 2",
+  "a11y.string.3": "string 3",
+  "a11y.string.4": "string 4",
+  "a11y.string.5": "string 5",
+  "a11y.string.6": "string 6",
+  "a11y.openString": "open string",
+  "a11y.fret": "fret {fret}",
+  "a11y.position": "{where}, {string}, note {note}",
+  "a11y.muted": "{string} muted",
+  "a11y.separator": "; ",
+  "a11y.chordVoicing": "Chord voicing: {text}",
+  "a11y.pickGrid": "Fingerstyle chart, {n} steps; current chord voicing: {text}",
+  "a11y.strumCell": "Step {n}, {stroke}",
+  "a11y.strumHint": "Tap to change the stroke",
+  "stroke.D": "Down-stroke",
+  "stroke.U": "Up-stroke",
+  "stroke.X": "Muted stroke",
+  "stroke.rest": "Rest",
 }
 const CATALOG: Readonly<Record<Lang, Messages>> = { "zh-TW": MESSAGES_ZH_TW, en: MESSAGES_EN }
 
@@ -3658,7 +3830,7 @@ const parseDrill = (raw: unknown, legacy: readonly unknown[]): Result<string, Dr
   return old ? ok({ best: old.best }) : err("沒有已儲存的練習紀錄")
 }
 
-// legacy：v1 的節奏設定（伴奏是和弦進行）；只沿用節奏型態、速度、小節數與重複
+// legacy：v1 的節奏設定（伴奏是和弦進行）；只沿用節奏型態、速度與小節數（舊的重複次數已取消）
 const parseRhythm = (raw: unknown, legacy?: unknown): Result<string, RhythmSettings> => {
   const src = isRecord(raw) ? raw : isRecord(legacy) ? legacy : undefined
   if (!src) return err("沒有已儲存的節奏設定")
@@ -3678,8 +3850,7 @@ const parseRhythm = (raw: unknown, legacy?: unknown): Result<string, RhythmSetti
       ? Math.floor(m.chordBass) : -1,
     scope: m.scope === "open" || m.scope === "barre" || m.scope === "both" ? m.scope : "open",
     voicingIdx: typeof m.voicingIdx === "number" && m.voicingIdx >= 0 ? Math.floor(m.voicingIdx) : 0,
-    bars: m.bars === 2 ? 2 : 1,
-    repeats: REPEAT_OPTIONS.includes(m.repeats) ? m.repeats : DEFAULT_RHYTHM.repeats,
+    bars: barsOptionOf(m.bars),
   })
 }
 
@@ -3794,7 +3965,7 @@ function PrefsSheet(props: {
         <Section header={<Text>{t("settings.preview")}</Text>}>
           <HStack>
             <Spacer />
-            <ChordBoard spec={PREVIEW_SPEC} prefs={prefs} nm={nm} width={previewWidth} />
+            <ChordBoard spec={PREVIEW_SPEC} prefs={prefs} nm={nm} width={previewWidth} t={t} />
             <Spacer />
           </HStack>
         </Section>
@@ -3945,7 +4116,7 @@ function App({ width, height }: { width: number; height: number }) {
         ),
       }}>
       {screen(t("tab.chords"), "music.note.list", 0, <ChordHub prefs={prefs} layout={layout} t={t} />)}
-      {screen(t("tab.scales"), "music.quarternote.3", 1, <ScaleTab prefs={prefs} layout={layout} />)}
+      {screen(t("tab.scales"), "music.quarternote.3", 1, <ScaleTab prefs={prefs} layout={layout} t={t} />)}
       {screen(t("tab.rhythm"), "metronome", 2, <RhythmStudio prefs={prefs} active={tab === 2} layout={layout} t={t} />)}
     </TabView>
   )
@@ -3973,8 +4144,9 @@ export {
   finderSections, progressionSections, practiceSections, rhythmTypeSection, rhythmPlaySection,
   rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, practiceChordsOfProgression,
   parsePrefs, parseHub, parseDrill, parseRhythm, assertNever, unwrapOr, ok, err, prefsRepository, hubRepository,
-  TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH,
-  cellHeightFor,
+  TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE,
+  cellHeightFor, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav,
+  STRUM_TEMPLATES, PICK_TEMPLATES, parseStrum, hintForNotation, notationLegend,
   pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, PALETTE_MESSAGE,
   effectiveBass, keyTitleOf, finderViewOf, stepIndex, progressionSeconds, practiceDeckOf, DEFAULT_HUB,
 }

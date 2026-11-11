@@ -67,6 +67,7 @@ declare const SharedAudioSession: {
 declare class AVPlayer {
   onReadyToPlay?: () => void
   onError?: (message: string) => void
+  numberOfLoops: number
   setSource(path: string): boolean
   play(): void
   stop(): void

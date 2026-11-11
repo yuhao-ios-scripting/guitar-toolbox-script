@@ -636,3 +636,30 @@
 
 # → 提問 / A-028
 
++ godev 採用建議，遷移節奏分頁。節奏分頁的播放移除1遍2變的切換，小節提供1小節、2小節、無限的切換。
+
+# → 回覆 / A-028
+
+* _2026-11-12 +0800_
+
+1. `godev 採用建議，遷移節奏分頁`
+
+   完成（0.8.0）：節奏分頁全部文案走字串表並有英文，約 90 個新字串鍵：節奏型態、播放區、節奏圖標題與提示、指彈指法標示說明；刷法與指彈共 18 個模板的名稱與說明改為 `labelKey`／`hintKey`。無障礙說明也一併遷移：`describePosition`、`describeVoicing`、刷法格標籤、指彈圖標籤、四種筆劃名稱，因此 `Fretboard`、`ChordBoard`、`StrumGrid`、`PickGrid` 新增 `t` 參數，音階分頁只接線（傳遞 `t`），其文案尚未遷移。AGENTS.md 英文用語表補了刷法模板、夾撥、小節等。
+
+2. `節奏分頁的播放移除1遍2變的切換，小節提供1小節、2小節、無限的切換`
+
+   完成（0.8.0）：移除「重複」（1／2／4 遍）與相關程式（`REPEAT_OPTIONS`、`effectiveRepeats`、90 秒上限）。「小節數」改為三選一：1 小節、2 小節、無限。無限＝以 1 小節為一圈循環播放，直到按「停止」、離開節奏分頁、切到其他分頁、關閉聲音或改任何會影響聲音的設定。實作依 Scripting 官方 AVPlayer 文件的 `numberOfLoops = -1`（負值＝無限循環）；循環用的 WAV 長度剛好等於一圈，超出一圈的尾音繞回開頭（`renderWav` 的 `loopSeconds`），避免接縫空隙與節奏飄移；播放游標以一小節為週期繞回。設定的 `bars` 型別改為 `1 | 2 | "loop"`，舊資料的 `repeats` 直接忽略，不需要搬移儲存 key。
+
+   `npm run typecheck` 零錯誤，`npm test` 556 個案例通過（新增循環、小節選項、模板與英文說明測試）。尚未推送。請實機確認：
+   - 選「無限」按播放後會持續循環、接縫處節奏不跳、按停止或換分頁即停止；AVPlayer 的循環是否有可聽到的空隙需耳朵判斷。
+   - 英文系統下節奏分頁、模板名稱與說明、播放區皆為英文且版面正常（例如「Alternating bass (Travis)」「Waltz bass + chord」）。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-028-1：下一步遷移音階分頁（音階名稱、找音／認音題目與回饋、標示與範圍，約 50 個字串）？需先決定音階名稱的英文，建議：Major scale (Ionian)、Natural minor (Aeolian)、Major pentatonic、Minor pentatonic、Blues scale、Dorian、Mixolydian、Lydian、Phrygian、Harmonic minor。建議預設：是。
+  - ans:
+
+---
+
+# → 提問 / A-029
+

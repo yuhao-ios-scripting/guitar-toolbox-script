@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, rhythmPlaySection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav, STRUM_TEMPLATES, PICK_TEMPLATES, parseStrum, hintForNotation, notationLegend, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, rhythmPlaySection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_MESSAGE, QUALITY_FORMULA, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -237,14 +237,14 @@ describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量�
   it("節奏頁區塊：每個函式都能建出畫面描述，選和弦在最底", () => {
     const s = DEFAULT_RHYTHM
     expect(rhythmTypeSection({
-      s, strumKey: "custom", strumTemplates: [], pickTemplates: [], patch: noop, changeBeats: noop,
+      s, t: tz, strumKey: "custom", strumTemplates: [], pickTemplates: [], patch: noop, changeBeats: noop,
     })).toBeTruthy()
     expect(rhythmPlaySection({
-      s, playSeconds: 10, capped: false, canPlay: true, nudgeBpm: noop, patch: noop,
+      s, t: tz, playSeconds: 10, canPlay: true, nudgeBpm: noop, patch: noop,
       play: async () => undefined, stop: noop,
     })).toBeTruthy()
     expect(rhythmGridSection({
-      s, prefs, bw: 320, pattern: { kind: "strum", strokes: ["D", "U"] }, currentSlot: -1,
+      s, t: tz, prefs, bw: 320, pattern: { kind: "strum", strokes: ["D", "U"] }, currentSlot: -1,
       frets: [], gridHint: "", gridLegend: "", tapStroke: noop,
     })).toBeTruthy()
     const voicings = rhythmVoicingsOf(s, prefs.barreShapes)
@@ -311,17 +311,17 @@ describe("設定的解析", () => {
     expect(unwrapOr(parseDrill({ best: "x" }, []), { best: -1 })).toEqual({ best: 0 })
   })
   it("節奏設定：不合法的值回到預設，bpm 被限制在範圍內", () => {
-    const r = unwrapOr(parseRhythm({ beats: 7, bpm: 9999, strumPattern: "??", pickKey: "nope", repeats: 99 }), DEFAULT_RHYTHM)
+    const r = unwrapOr(parseRhythm({ beats: 7, bpm: 9999, strumPattern: "??", pickKey: "nope", bars: "x" }), DEFAULT_RHYTHM)
     expect(r.beats).toBe(4)
     expect(r.bpm).toBeLessThan(9999)
     expect(r.strumPattern).toHaveLength(8)
-    expect(r.repeats).toBe(DEFAULT_RHYTHM.repeats)
+    expect(r.bars).toBe(1)
     expect(r).toMatchObject({ chordRoot: 0, chordQuality: "maj", chordBass: -1, scope: "open", voicingIdx: 0 })
   })
   it("節奏設定：沿用 v1 的節奏型態與速度，伴奏改為預設和弦", () => {
-    const old = { kind: "pick", beats: 3, bpm: 100, bars: 2, repeats: 4, tonic: 7, progKey: "x", prefer: "barre" }
+    const old = { kind: "pick", beats: 3, bpm: 100, bars: 2, repeats: 4, tonic: 7, progKey: "x", prefer: "barre" } // repeats 已取消
     const r = unwrapOr(parseRhythm(null, old), DEFAULT_RHYTHM)
-    expect(r).toMatchObject({ kind: "pick", beats: 3, bpm: 100, bars: 2, repeats: 4, chordRoot: 0, scope: "open" })
+    expect(r).toMatchObject({ kind: "pick", beats: 3, bpm: 100, bars: 2, chordRoot: 0, scope: "open" })
     expect(parseRhythm(null, null).ok).toBe(false)
   })
   it("節奏設定：非法的和弦、指法範圍與序號被修正", () => {
@@ -362,18 +362,22 @@ describe("設計系統：色彩對比（WCAG AA）", () => {
 
 describe("設計系統：無障礙文字與觸控目標", () => {
   const nm = noteName(false)
-  it("describePosition：第 3 格、第五弦為 C", () => {
-    expect(describePosition(1, 3, nm)).toBe("第 3 格，第五弦，音名 C")
-    expect(describePosition(0, 0, nm)).toBe("空弦，第六弦，音名 E")
+  it("describePosition：第 3 格、第五弦為 C（中英文）", () => {
+    expect(describePosition(1, 3, nm, tz)).toBe("第 3 格，第五弦，音名 C")
+    expect(describePosition(0, 0, nm, tz)).toBe("空弦，第六弦，音名 E")
+    expect(describePosition(1, 3, nm, te)).toBe("fret 3, string 5, note C")
   })
   it("describeVoicing：C 大三和弦逐弦說明並含悶音", () => {
-    const text = describeVoicing([null, 3, 2, 0, 1, 0], nm)
+    const text = describeVoicing([null, 3, 2, 0, 1, 0], nm, tz)
     expect(text.split("；")).toHaveLength(6)
     expect(text).toContain("第六弦悶音")
     expect(text).toContain("第 3 格，第五弦，音名 C")
+    expect(describeVoicing([null, 3], nm, te)).toBe("string 6 muted; fret 3, string 5, note C")
   })
   it("刷法名稱涵蓋四種筆劃", () => {
-    expect(Object.keys(STROKE_NAME_ZH).sort()).toEqual(["-", "D", "U", "X"])
+    expect(Object.keys(STROKE_MESSAGE).sort()).toEqual(["-", "D", "U", "X"])
+    expect(tz(STROKE_MESSAGE.X)).toBe("悶音切刷")
+    expect(te(STROKE_MESSAGE.D)).toBe("Down-stroke")
   })
   it("觸控目標最小 44pt，指板格高在各寬度都不低於它", () => {
     expect(TOUCH_MIN).toBe(44)
@@ -442,5 +446,53 @@ describe("在地化：原始碼中的字串鍵都存在", () => {
     const rest = source.slice(0, start) + source.slice(end)
     Object.keys(zh).filter((k) => !["tab.", "settings.done", "settings.reset", "settings.title"].some((p) => k.startsWith(p) && false))
       .forEach((k) => expect(rest.includes(`"${k}"`), `未使用的鍵：${k}`).toBe(true))
+  })
+})
+
+describe("節奏頁：小節選項與循環播放", () => {
+  const pattern = { kind: "strum", strokes: parseStrum("D-DU-UDU") } as const
+  const plan = (bars: number, loop: boolean) =>
+    ({ chords: [[0, 2, 2, 1, 0, 0]], pattern, bpm: 120, barsPerChord: bars, loop }) as const
+
+  it("barsOptionOf：1、2、loop 以外一律當 1 小節", () => {
+    expect([1, 2, "loop", 3, "x", undefined].map(barsOptionOf)).toEqual([1, 2, "loop", 1, 1, 1])
+  })
+  it("一小節 8 格、120 BPM 為 2 秒；2 小節 4 秒；音符都在該段時間內開始", () => {
+    expect(planPassSeconds(plan(1, false))).toBeCloseTo(2, 6)
+    expect(planPassSeconds(plan(2, false))).toBeCloseTo(4, 6)
+    const events = planEvents(plan(2, false))
+    expect(events.length).toBeGreaterThan(0)
+    expect(Math.max(...events.map((e) => e.at))).toBeLessThan(4)
+  })
+  it("有限播放：runSeconds 等於一圈，播完游標消失", () => {
+    const p = plan(1, false)
+    expect(runSeconds(p)).toBeCloseTo(2, 6)
+    expect(playheadAt(p, 0.1)).toEqual({ chord: 0, slot: 0 })
+    expect(playheadAt(p, 2.01)).toBeNull()
+  })
+  it("循環播放：沒有終點，游標以一小節為週期繞回", () => {
+    const p = plan(1, true)
+    expect(runSeconds(p)).toBe(Infinity)
+    expect(playheadAt(p, 0.3)).toEqual(playheadAt(p, 0.3 + 2 * 5))
+    expect(playheadAt(p, 2.01)?.slot).toBe(0)
+  })
+  it("renderWav 循環模式：檔案長度剛好等於一圈（含尾音繞回）", () => {
+    const events = planEvents(plan(1, true))
+    const finite = renderWav(events)
+    const looped = renderWav(events, 2)
+    const samples = (b: Uint8Array) => (b.length - 44) / 2
+    expect(samples(looped)).toBe(2 * 22050)
+    expect(samples(finite)).toBeGreaterThan(samples(looped) - 1)
+  })
+  it("模板：每個模板的名稱與說明鍵都有中英文", () => {
+    ;[...STRUM_TEMPLATES, ...PICK_TEMPLATES].forEach((x) => {
+      expect(tz(x.labelKey)).not.toBe("")
+      expect(te(x.labelKey)).not.toBe(tz(x.labelKey))
+      expect(te(x.hintKey)).not.toBe("")
+    })
+  })
+  it("指法標示：英文說明也能換成 T123 寫法", () => {
+    expect(hintForNotation(te("rhythm.pick.arp8.hint"), "t123")).toContain("T-1-2-3-2-1-2-3")
+    expect(notationLegend("pima", te)).toContain("thumb p")
   })
 })
