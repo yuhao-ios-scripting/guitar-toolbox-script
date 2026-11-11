@@ -26,7 +26,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4] // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.1.0"
+const APP_VERSION = "0.2.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -168,6 +168,10 @@ type PaletteKey = keyof typeof PALETTES
 type Palette = (typeof PALETTES)[PaletteKey]
 const PALETTE_KEYS: readonly PaletteKey[] = ["classic", "forest", "mono"]
 
+// 可選的封閉和弦指型（與 MOVABLE_SHAPES 同序）；C、G 型伸張大，預設不啟用
+const BARRE_SHAPE_NAMES: readonly string[] = ["E", "A", "D", "C", "G"]
+const DEFAULT_BARRE_SHAPES: readonly string[] = ["E", "A", "D"]
+
 interface DiagramPrefs {
   showStringNumbers: boolean // 標示 1–6 弦
   boardLabel: BoardLabel     // 指板標示：手指編號／音名／不顯示
@@ -181,11 +185,13 @@ interface DiagramPrefs {
   autoPlay: boolean          // 切換和弦／換題時自動播放
   playStyle: PlayStyle       // 和弦播放方式
   haptics: boolean           // 觸覺回饋
+  barreShapes: readonly string[] // 啟用的封閉和弦指型（E／A／D／C／G）
 }
 const DEFAULT_PREFS: DiagramPrefs = {
   showStringNumbers: true, boardLabel: "finger", showSideNames: true, highlightRoot: true,
   accidental: "auto", palette: "mono", fretRows: 4, orientation: "horizontal",
   soundOn: true, autoPlay: true, playStyle: "strum", haptics: true,
+  barreShapes: DEFAULT_BARRE_SHAPES,
 }
 const PREFS_KEY = "fretboard.prefs.v2"
 
@@ -206,6 +212,10 @@ const prefsRepository = {
       if (saved && saved.showSideNames === undefined) {
         merged.showSideNames = saved.showNoteNames !== false
       }
+      // 舊版沒有 barreShapes；格式不符時回到預設
+      merged.barreShapes = Array.isArray(merged.barreShapes)
+        ? BARRE_SHAPE_NAMES.filter((n) => merged.barreShapes.includes(n))
+        : DEFAULT_BARRE_SHAPES
       return merged
     } catch { return DEFAULT_PREFS }
   },
@@ -569,7 +579,8 @@ const MOVABLE_SHAPES: readonly MovableShape[] = [
 ]
 
 type VoicingKind = "open" | "barre"
-type FinderVoicing = { title: string; kind: VoicingKind; frets: Fret[] } // null 不彈，0 空弦
+// shape：封閉和弦所屬指型（E／A／D／C／G）；開放和弦沒有
+type FinderVoicing = { title: string; kind: VoicingKind; frets: Fret[]; shape?: string } // null 不彈，0 空弦
 
 const parseOpen = (s: string): Fret[] =>
   s.split("").map(c => (c === "x" ? null : parseInt(c, 10)))
@@ -577,12 +588,12 @@ const parseOpen = (s: string): Fret[] =>
 function buildVoicings(root: number, q: string): FinderVoicing[] {
   const list: FinderVoicing[] = []
   const seen = new Set<string>()
-  const add = (title: string, kind: VoicingKind, frets: Fret[]) => {
+  const add = (title: string, kind: VoicingKind, frets: Fret[], shape?: string) => {
     const k = frets.join(",")
     if (seen.has(k)) return
     if (Math.max(...frets.filter((f): f is number => f !== null)) > 15) return
     seen.add(k)
-    list.push({ title, kind, frets })
+    list.push({ title, kind, frets, shape })
   }
 
   const open = OPEN[`${root}-${q}`]
@@ -596,7 +607,7 @@ function buildVoicings(root: number, q: string): FinderVoicing[] {
       const label = i === 0 ? "" : "・變化"
       add(f === 0 ? `${shape.name} 型${label}` : `${shape.name} 型封閉（第 ${f} 格）${label}`,
         f === 0 ? "open" : "barre",
-        offsets.map((o) => (o < 0 ? null : o + f)))
+        offsets.map((o) => (o < 0 ? null : o + f)), shape.name)
     })
   })
   return list
@@ -622,18 +633,18 @@ const buildSlashVoicings = (root: PitchClass, q: string, bass: PitchClass): Find
   const need = [def.intervals[0], def.intervals[1]].map((i) => mod12(root + i))
   const out: FinderVoicing[] = []
   const seen = new Set<string>()
-  const push = (title: string, frets: Fret[]) => {
+  const push = (title: string, frets: Fret[], shape?: string) => {
     const k = frets.join(",")
     if (seen.has(k)) return
     seen.add(k)
     const kind: VoicingKind = frets.some((f) => f === 0) ? "open" : "barre"
-    out.push({ title, kind, frets })
+    out.push({ title, kind, frets, shape })
   }
 
   getVoicings(root, q).forEach((v) => {
     const lowest = v.frets.findIndex((f) => f !== null)
     if (lowest >= 0 && mod12(OPEN_STRINGS[lowest] + (v.frets[lowest] as number)) === bass) {
-      push(v.title, v.frets)
+      push(v.title, v.frets, v.shape)
       return
     }
     const fretted = v.frets.filter((f): f is number => f !== null && f > 0)
@@ -658,7 +669,7 @@ const buildSlashVoicings = (root: PitchClass, q: string, bass: PitchClass): Find
     }
     if (best) {
       const same = best.frets.join(",") === v.frets.join(",")
-      push(same ? v.title : `${v.title}・換低音`, best.frets)
+      push(same ? v.title : `${v.title}・換低音`, best.frets, v.shape)
     }
   })
   return out
@@ -1101,21 +1112,26 @@ const chordFitsKey = (key: Key, root: PitchClass, quality: string): boolean => {
 
 const scopeAllows = (scope: Scope, kind: VoicingKind): boolean => scope === "both" || kind === scope
 // bass：指定低音（on）；-1 或與根音相同時視為一般和弦
+// 開放和弦不受指型選項影響；封閉和弦只留下設定中啟用的指型
+const shapeAllows = (shapes: readonly string[], v: FinderVoicing): boolean =>
+  v.kind === "open" || v.shape === undefined || shapes.includes(v.shape)
 const voicingsInScope = (
-  root: PitchClass, quality: string, scope: Scope, bass: number = -1,
+  root: PitchClass, quality: string, scope: Scope, shapes: readonly string[], bass: number = -1,
 ): FinderVoicing[] => {
   const all = bass >= 0 && bass !== root
     ? getSlashVoicings(root, quality, bass)
     : getVoicings(root, quality)
-  return all.filter((v) => scopeAllows(scope, v.kind))
+  return all.filter((v) => scopeAllows(scope, v.kind) && shapeAllows(shapes, v))
 }
 
 interface Deck { readonly voicings: TrainerVoicing[]; readonly skipped: PracticeChord[] }
 
 // 由一組和弦與指法範圍，組出練習題庫
-const deckFromChords = (chords: readonly PracticeChord[], scope: Scope): Deck => {
+const deckFromChords = (
+  chords: readonly PracticeChord[], scope: Scope, shapes: readonly string[],
+): Deck => {
   const entries = chords.map((chord) => {
-    const vs = voicingsInScope(chord.root, chord.quality, scope)
+    const vs = voicingsInScope(chord.root, chord.quality, scope, shapes)
       .map((v): TrainerVoicing => ({ chord, title: v.title, kind: v.kind, frets: v.frets }))
     return { chord, vs }
   })
@@ -1127,7 +1143,7 @@ const deckFromChords = (chords: readonly PracticeChord[], scope: Scope): Deck =>
 
 // 題庫來源 A：調內所選級數 × 所選類型（只留符合調性的組合）
 const buildDeck = (
-  key: Key, scope: Scope, degrees: readonly number[], qualities: readonly string[],
+  key: Key, scope: Scope, shapes: readonly string[], degrees: readonly number[], qualities: readonly string[],
 ): Deck => {
   const chosenQualities = ALL_QUALITIES.filter((q) => qualities.includes(q))
   const chords = diatonicChords(key)
@@ -1135,7 +1151,7 @@ const buildDeck = (
     .flatMap((c) => chosenQualities
       .filter((q) => chordFitsKey(key, c.root, q))
       .map((q): PracticeChord => ({ root: c.root, quality: q, degree: c.degree })))
-  return deckFromChords(chords, scope)
+  return deckFromChords(chords, scope, shapes)
 }
 
 const describe = (v: TrainerVoicing): string => `第 ${v.chord.degree + 1} 級　${v.title}`
@@ -1188,13 +1204,15 @@ interface ProgChord {
   readonly voicing: FinderVoicing | null
 }
 
-const resolveProgression = (key: Key, prog: ProgDef, prefer: Prefer, flats: boolean): ProgChord[] => {
+const resolveProgression = (
+  key: Key, prog: ProgDef, prefer: Prefer, flats: boolean, shapes: readonly string[],
+): ProgChord[] => {
   const diatonic = diatonicChords(key)
   const nm = noteName(flats)
   return prog.steps.map((st) => {
     const d = diatonic[st.deg]
     const q = st.q ?? d.quality
-    const vs = getVoicings(d.root, q)
+    const vs = getVoicings(d.root, q).filter((v) => shapeAllows(shapes, v))
     const voicing = vs.find((v) => v.kind === prefer) ?? vs[0] ?? null
     return {
       numeral: st.q ? ROMAN[d.degree] + qualityDef(q).suffix : romanNumeral(d),
@@ -1308,7 +1326,7 @@ function chordDetailRows(p: {
   const q = qualityDef(quality)
   const nm = noteName(flats)
   const notes = q.intervals.map((i) => nm(root + i)).join("  ")
-  const voicings = only ? [only] : voicingsInScope(root, quality, scope, bass)
+  const voicings = only ? [only] : voicingsInScope(root, quality, scope, prefs.barreShapes, bass)
 
   const rows: JSX.Element[] = [
     <VStack key="head" alignment="leading" spacing={4}>
@@ -1388,9 +1406,10 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   const progs = progsOf(s.mode)
   const progIdx = Math.max(0, progs.findIndex((p) => p.key === s.progKey))
   const prog = progs[progIdx]
+  const shapesKey = prefs.barreShapes.join(",")
   const progChords = useMemo(
-    () => resolveProgression({ tonic: s.tonic, mode: s.mode }, prog, prefer, keyFlats),
-    [s.tonic, s.mode, prog.key, prefer, keyFlats],
+    () => resolveProgression({ tonic: s.tonic, mode: s.mode }, prog, prefer, keyFlats, prefs.barreShapes),
+    [s.tonic, s.mode, prog.key, prefer, keyFlats, shapesKey],
   )
   const selIdx = Math.min(selected, progChords.length - 1)
   const sel = progChords[selIdx]
@@ -1419,9 +1438,9 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   const qualitiesKey = s.qualities.join(",")
   const deck = useMemo(
     () => s.source === "progression"
-      ? deckFromChords(practiceChordsOfProgression(progChords), s.scope)
-      : buildDeck({ tonic: s.tonic, mode: s.mode }, s.scope, s.degrees, s.qualities),
-    [s.source, progChords, s.tonic, s.mode, s.scope, degreesKey, qualitiesKey],
+      ? deckFromChords(practiceChordsOfProgression(progChords), s.scope, prefs.barreShapes)
+      : buildDeck({ tonic: s.tonic, mode: s.mode }, s.scope, prefs.barreShapes, s.degrees, s.qualities),
+    [s.source, progChords, s.tonic, s.mode, s.scope, shapesKey, degreesKey, qualitiesKey],
   )
   const ordered = useMemo(
     () => (s.shuffle ? shuffled(deck.voicings, session.seed) : deck.voicings),
@@ -1430,7 +1449,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
 
   useEffect(() => {
     dispatch({ type: "reset", seed: Date.now() % 2147483647 })
-  }, [s.tonic, s.mode, s.scope, degreesKey, qualitiesKey, s.shuffle, s.source, prog.key])
+  }, [s.tonic, s.mode, s.scope, shapesKey, degreesKey, qualitiesKey, s.shuffle, s.source, prog.key])
 
   const current = ordered.length ? ordered[session.index % ordered.length] : undefined
   const practiceName = practiceChordName(keyFlats)
@@ -1451,7 +1470,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   }
   const auditionFinder = (root: PitchClass, quality: string, bass: number) => {
     if (!prefs.soundOn || !prefs.autoPlay) return
-    const vs = voicingsInScope(root, quality, s.scope, bass)
+    const vs = voicingsInScope(root, quality, s.scope, prefs.barreShapes, bass)
     if (vs.length > 0) playChord(vs[0].frets, prefs.playStyle)
   }
   const step = (dir: 1 | -1) => {
@@ -2839,8 +2858,8 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
   const progIdx = Math.max(0, progs.findIndex((p) => p.key === s.progKey))
   const prog = progs[progIdx]
   const chords = useMemo(
-    () => resolveProgression(keySig, prog, s.prefer, flats),
-    [s.tonic, s.mode, prog.key, s.prefer, flats],
+    () => resolveProgression(keySig, prog, s.prefer, flats, prefs.barreShapes),
+    [s.tonic, s.mode, prog.key, s.prefer, flats, prefs.barreShapes.join(",")],
   )
   const selIdx = Math.min(selected, chords.length - 1)
 
@@ -3161,6 +3180,17 @@ function PrefsSheet(props: {
             <Text tag={5}>5 格</Text>
             <Text tag={6}>6 格</Text>
           </Picker>
+        </Section>
+
+        <Section
+          header={<Text>封閉和弦指型</Text>}
+          footer={<Text>決定和弦速查、和弦進行與和弦練習會列出哪些可移動指型（以開放和弦為名，如 E 型即 E 和弦的形狀）。開放和弦不受影響。D 型只按上方四條弦；C 型、G 型在高把位伸張較大，預設關閉。</Text>}>
+          {BARRE_SHAPE_NAMES.map((n) => (
+            <Toggle key={n} title={`${n} 型`} value={prefs.barreShapes.includes(n)}
+              onChanged={(v: boolean) => onChange({
+                barreShapes: BARRE_SHAPE_NAMES.filter((x) => (x === n ? v : prefs.barreShapes.includes(x))),
+              })} />
+          ))}
         </Section>
 
         <Section
