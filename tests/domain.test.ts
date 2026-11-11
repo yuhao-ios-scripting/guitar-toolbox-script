@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, rhythmPlaySection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -225,24 +225,33 @@ describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量�
     })
     expect(out.map((p) => p.pane)).toEqual(["left", "right", "left", "left"])
   })
-  it("節奏頁區塊：每個函式都能建出畫面描述", () => {
+  it("節奏頁區塊：每個函式都能建出畫面描述，選和弦在最底", () => {
     const s = DEFAULT_RHYTHM
     expect(rhythmTypeSection({
       s, strumKey: "custom", strumTemplates: [], pickTemplates: [], patch: noop, changeBeats: noop,
     })).toBeTruthy()
     expect(rhythmPlaySection({
-      s, songSeconds: 10, capped: false, selIdx: 0, nudgeBpm: noop,
-      audition: async () => undefined, playSong: async () => undefined, stop: noop,
+      s, playSeconds: 10, capped: false, canPlay: true, nudgeBpm: noop, patch: noop,
+      play: async () => undefined, stop: noop,
     })).toBeTruthy()
-    expect(rhythmProgSection({
-      s, layout: computeLayout(390, 844), keyTitle: "C 大調", prog, progs, progIdx: 0,
-      chords: progChords, shownIdx: 0, patch: noop, setSelected: noop, choose: noop,
-    })).toBeTruthy()
-    const grid = rhythmGridSections({
+    expect(rhythmGridSection({
       s, prefs, bw: 320, pattern: { kind: "strum", strokes: ["D", "U"] }, currentSlot: -1,
-      shown: progChords[0], shownFrets: [], nm: noteName(false), gridHint: "", gridLegend: "", tapStroke: noop,
+      frets: [], gridHint: "", gridLegend: "", tapStroke: noop,
+    })).toBeTruthy()
+    const voicings = rhythmVoicingsOf(s, prefs.barreShapes)
+    const chord = rhythmChordSections({
+      s, prefs, bw: 320, naming: chordNaming(s.chordRoot, s.chordQuality, s.chordBass, "auto"),
+      voicings, chosenIdx: 0, changeChord: noop, chooseVoicing: noop,
     })
-    expect(grid).toHaveLength(2)
+    expect(chord).toHaveLength(2)
+  })
+  it("節奏頁的按法清單與選用序號", () => {
+    const vs = rhythmVoicingsOf(DEFAULT_RHYTHM, ["E", "A", "D"])
+    expect(vs.length).toBeGreaterThan(0)
+    expect(chosenIndexOf(0, 3)).toBe(-1)
+    expect(chosenIndexOf(4, 9)).toBe(3)
+    expect(chosenIndexOf(4, -2)).toBe(0)
+    expect(rhythmVoicingsOf({ ...DEFAULT_RHYTHM, scope: "barre" }, ["E", "A", "D"]).every((v) => v.kind === "barre")).toBe(true)
   })
 })
 
@@ -298,6 +307,17 @@ describe("設定的解析", () => {
     expect(r.bpm).toBeLessThan(9999)
     expect(r.strumPattern).toHaveLength(8)
     expect(r.repeats).toBe(DEFAULT_RHYTHM.repeats)
+    expect(r).toMatchObject({ chordRoot: 0, chordQuality: "maj", chordBass: -1, scope: "open", voicingIdx: 0 })
+  })
+  it("節奏設定：沿用 v1 的節奏型態與速度，伴奏改為預設和弦", () => {
+    const old = { kind: "pick", beats: 3, bpm: 100, bars: 2, repeats: 4, tonic: 7, progKey: "x", prefer: "barre" }
+    const r = unwrapOr(parseRhythm(null, old), DEFAULT_RHYTHM)
+    expect(r).toMatchObject({ kind: "pick", beats: 3, bpm: 100, bars: 2, repeats: 4, chordRoot: 0, scope: "open" })
+    expect(parseRhythm(null, null).ok).toBe(false)
+  })
+  it("節奏設定：非法的和弦、指法範圍與序號被修正", () => {
+    const r = unwrapOr(parseRhythm({ chordRoot: 14, chordQuality: "zz", chordBass: 50, scope: "x", voicingIdx: -3 }), DEFAULT_RHYTHM)
+    expect(r).toMatchObject({ chordRoot: 2, chordQuality: "maj", chordBass: -1, scope: "open", voicingIdx: 0 })
   })
   it("儲存庫：讀不到資料時回傳預設，存了之後讀得回來", () => {
     expect(prefsRepository.load()).toEqual(DEFAULT_PREFS)

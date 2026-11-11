@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.5.0"
+const APP_VERSION = "0.6.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -1367,18 +1367,22 @@ interface FinderView {
   readonly flats: boolean
   readonly title: string
 }
-// 速查的和弦標題與升降記號：小調性質的和弦偏好降記號慣例
-const finderViewOf = (s: HubSettings, accidental: Accidental): FinderView => {
-  const quality = qualityDef(s.finderQuality)
-  const bass = effectiveBass(s.finderRoot, s.finderBass)
+// 和弦的標題與升降記號：小調性質的和弦偏好降記號慣例（速查與節奏頁共用）
+const chordNaming = (
+  root: PitchClass, qualityKey: QualityKey, bassPc: number, accidental: Accidental,
+): FinderView => {
+  const quality = qualityDef(qualityKey)
+  const bass = effectiveBass(root, bassPc)
   const flats = resolveFlats(
     accidental,
-    prefersFlats({ tonic: s.finderRoot, mode: MINORISH_QUALITIES.has(quality.key) ? "minor" : "major" }),
+    prefersFlats({ tonic: root, mode: MINORISH_QUALITIES.has(quality.key) ? "minor" : "major" }),
   )
   const nm = noteName(flats)
-  const title = nm(s.finderRoot) + quality.suffix + (bass >= 0 ? `/${nm(bass)}` : "")
-  return { root: s.finderRoot, quality, bass, flats, title }
+  const title = nm(root) + quality.suffix + (bass >= 0 ? `/${nm(bass)}` : "")
+  return { root, quality, bass, flats, title }
 }
+const finderViewOf = (s: HubSettings, accidental: Accidental): FinderView =>
+  chordNaming(s.finderRoot, s.finderQuality, s.finderBass, accidental)
 
 // 在 length 個項目中前進或後退一格（環狀）
 const stepIndex = (index: number, length: number, dir: 1 | -1): number =>
@@ -2781,19 +2785,20 @@ interface RhythmSettings {
   pickKey: string
   notation: FingerNotation // 指彈圖的指法表示法：pima 或 T123
   bpm: number
-  tonic: PitchClass
-  mode: KeyMode
-  progKey: string
-  prefer: Prefer
-  bars: number           // 每個和弦幾小節
-  repeats: number        // 整段進行重複幾遍
+  chordRoot: PitchClass    // 伴奏用的和弦（與和弦速查相同的選法）
+  chordQuality: QualityKey
+  chordBass: number        // on 低音；-1 = 不指定
+  scope: Scope             // 指法範圍：開放／封閉／全部
+  voicingIdx: number       // 在該範圍的按法清單中選用第幾個
+  bars: number             // 播放幾小節
+  repeats: number          // 重複幾遍
 }
 const DEFAULT_RHYTHM: RhythmSettings = {
   kind: "strum", beats: 4,
   strumPattern: firstStrum(4).pattern, pickKey: firstPick(4).key,
   notation: "pima",
-  bpm: 80, tonic: mod12(0), mode: "major", progKey: MAJOR_PROGS[0].key,
-  prefer: "open", bars: 1, repeats: 2,
+  bpm: 80, chordRoot: mod12(0), chordQuality: "maj", chordBass: -1,
+  scope: "open", voicingIdx: 0, bars: 1, repeats: 2,
 }
 
 const validStrum = (p: unknown, beats: number): p is string =>
@@ -2965,20 +2970,20 @@ const rhythmTypeSection = (c: RhythmTypeCtx): JSX.Element => {
 
 interface RhythmPlayCtx {
   readonly s: RhythmSettings
-  readonly songSeconds: number
+  readonly playSeconds: number
   readonly capped: boolean
-  readonly selIdx: number
+  readonly canPlay: boolean
   readonly nudgeBpm: (delta: number) => void
-  readonly audition: (i: number) => Promise<void>
-  readonly playSong: () => Promise<void>
+  readonly patch: (p: Partial<RhythmSettings>) => void
+  readonly play: () => Promise<void>
   readonly stop: () => void
 }
-// 播放：速度微調、試聽、播放整段與停止
+// 播放：速度微調、小節數與重複、播放與停止
 const rhythmPlaySection = (c: RhythmPlayCtx): JSX.Element => {
-  const { s, songSeconds, capped, selIdx, nudgeBpm, audition, playSong, stop } = c
+  const { s, playSeconds, capped, canPlay, nudgeBpm, patch, play, stop } = c
   return (
     <Section key="play" header={<Text>播放</Text>}
-      footer={<Text>{`整段約 ${songSeconds} 秒${capped ? "（重複次數已自動縮減，避免過長）" : ""}。試聽會以目前選的和弦彈 2 小節。調整速度會停止目前的播放。`}</Text>}>
+      footer={<Text>{`約 ${playSeconds} 秒${capped ? "（重複次數已自動縮減，避免過長）" : ""}。以下方選用的和弦與指法伴奏。調整速度會停止目前的播放。`}</Text>}>
       <HStack>
         <Text>速度</Text>
         <Spacer />
@@ -2999,81 +3004,23 @@ const rhythmPlaySection = (c: RhythmPlayCtx): JSX.Element => {
           lineLimit={1} fixedSize={true}
           disabled={s.bpm >= BPM_MAX} action={() => nudgeBpm(10)} />
       </HStack>
-      <HStack spacing={8}>
-        <Button title="▶ 試聽" buttonStyle="bordered"
-          lineLimit={1} fixedSize={true}
-          action={() => { void audition(selIdx) }} />
-        <Button title="▶ 播放進行" buttonStyle="borderedProminent"
-          lineLimit={1} fixedSize={true}
-          action={() => { void playSong() }} />
-        <Button title="■ 停止" buttonStyle="bordered"
-          lineLimit={1} fixedSize={true}
-          action={stop} />
-      </HStack>
-    </Section>
-  )
-}
-
-interface RhythmProgCtx {
-  readonly s: RhythmSettings
-  readonly layout: Layout
-  readonly keyTitle: string
-  readonly prog: ProgDef
-  readonly progs: readonly ProgDef[]
-  readonly progIdx: number
-  readonly chords: readonly ProgChord[]
-  readonly shownIdx: number
-  readonly patch: (p: Partial<RhythmSettings>) => void
-  readonly setSelected: (i: number) => void
-  readonly choose: (i: number) => void
-}
-// 調性與進行：主音、調式、進行、指法、小節數、重複與和弦按鈕
-const rhythmProgSection = (c: RhythmProgCtx): JSX.Element => {
-  const { s, layout, keyTitle, prog, progs, progIdx, chords, shownIdx, patch, setSelected, choose } = c
-  return (
-    <Section key="prog" header={<Text>{`${keyTitle}・${prog.label}`}</Text>}
-      footer={<Text>點選和弦可切換上方指彈圖與試聽的和弦；播放時會標出目前彈到的和弦。</Text>}>
-      <Picker title="主音" value={s.tonic} pickerStyle="menu"
-        onChanged={(v: number) => { patch({ tonic: mod12(v) }); setSelected(0) }}>
-        {TONIC_LABELS.map((label, i) => <Text key={i} tag={i}>{label}</Text>)}
-      </Picker>
-      <Picker title="調式" value={s.mode} pickerStyle="segmented"
-        onChanged={(v: string) => {
-          const m = v as KeyMode
-          patch({ mode: m, progKey: progsOf(m)[0].key })
-          setSelected(0)
-        }}>
-        <Text tag="major">大調</Text>
-        <Text tag="minor">自然小調</Text>
-      </Picker>
-      <Picker title="進行" value={progIdx} pickerStyle="menu"
-        onChanged={(v: number) => { patch({ progKey: progs[v].key }); setSelected(0) }}>
-        {progs.map((p, i) => <Text key={p.key} tag={i}>{p.label}</Text>)}
-      </Picker>
-      <Picker title="指法" value={s.prefer} pickerStyle="segmented"
-        onChanged={(v: string) => patch({ prefer: v as Prefer })}>
-        <Text tag="open">開放</Text>
-        <Text tag="barre">封閉</Text>
-      </Picker>
-      <Picker title="每個和弦" value={s.bars} pickerStyle="segmented"
+      <Picker title="小節數" value={s.bars} pickerStyle="segmented"
         onChanged={(v: number) => patch({ bars: v })}>
         <Text tag={1}>1 小節</Text>
         <Text tag={2}>2 小節</Text>
       </Picker>
-      <Picker title="整段重複" value={s.repeats} pickerStyle="segmented"
+      <Picker title="重複" value={s.repeats} pickerStyle="segmented"
         onChanged={(v: number) => patch({ repeats: v })}>
         {REPEAT_OPTIONS.map((n) => <Text key={n} tag={n}>{`${n} 遍`}</Text>)}
       </Picker>
-      {chunk(range(chords.length), layout.paneWidth >= 600 && !layout.split ? 6 : 4).map((row, ri) => (
-        <HStack key={ri} spacing={8}>
-          {row.map((i) => (
-            <Button key={i} title={chords[i].name}
-              buttonStyle={i === shownIdx ? "borderedProminent" : "bordered"}
-              lineLimit={1} fixedSize={true}
-              action={() => choose(i)} />
-          ))}
-        </HStack>
-      ))}
+      <HStack spacing={8}>
+        <Button title="▶ 播放" buttonStyle="borderedProminent"
+          lineLimit={1} fixedSize={true}
+          disabled={!canPlay} action={() => { void play() }} />
+        <Button title="■ 停止" buttonStyle="bordered"
+          lineLimit={1} fixedSize={true}
+          action={stop} />
+      </HStack>
     </Section>
   )
 }
@@ -3084,17 +3031,15 @@ interface RhythmGridCtx {
   readonly bw: number
   readonly pattern: RhythmPattern
   readonly currentSlot: number
-  readonly shown: ProgChord
-  readonly shownFrets: readonly Fret[]
-  readonly nm: (pc: PitchClass) => string
+  readonly frets: readonly Fret[]
   readonly gridHint: string
   readonly gridLegend: string
   readonly tapStroke: (i: number) => void
 }
-// 右欄：節奏圖與目前和弦的指法
-const rhythmGridSections = (c: RhythmGridCtx): JSX.Element[] => {
-  const { s, prefs, bw, pattern, currentSlot, shown, shownFrets, nm, gridHint, gridLegend, tapStroke } = c
-  return [
+// 節奏圖（刷法或指彈）
+const rhythmGridSection = (c: RhythmGridCtx): JSX.Element => {
+  const { s, prefs, bw, pattern, currentSlot, frets, gridHint, gridLegend, tapStroke } = c
+  return (
     <Section key="grid" header={<Text>{`${s.kind === "strum" ? "刷法" : "指法"}・${s.beats}/4 拍・每格 = 八分音符`}</Text>}
       footer={<Text>{gridLegend}</Text>}>
       <HStack>
@@ -3104,31 +3049,76 @@ const rhythmGridSections = (c: RhythmGridCtx): JSX.Element[] => {
             width={bw} onTap={tapStroke} />
         ) : null}
         {s.kind === "pick" && pattern.kind === "pick" ? (
-          <PickGrid slots={pattern.slots} frets={shownFrets} current={currentSlot}
+          <PickGrid slots={pattern.slots} frets={frets} current={currentSlot}
             notation={s.notation} prefs={prefs} width={bw} />
         ) : null}
         <Spacer />
       </HStack>
       <Text font="subheadline" foregroundStyle="secondaryLabel">{gridHint}</Text>
+    </Section>
+  )
+}
+
+interface RhythmChordCtx {
+  readonly s: RhythmSettings
+  readonly prefs: DiagramPrefs
+  readonly bw: number
+  readonly naming: FinderView
+  readonly voicings: readonly FinderVoicing[]
+  readonly chosenIdx: number
+  readonly changeChord: (p: Partial<RhythmSettings>) => void
+  readonly chooseVoicing: (i: number) => void
+}
+// 頁面最底：選擇和弦（與和弦速查相同）與指法圖；打勾的指法就是伴奏使用的指法
+const rhythmChordSections = (c: RhythmChordCtx): JSX.Element[] => {
+  const { s, prefs, bw, naming, voicings, chosenIdx, changeChord, chooseVoicing } = c
+  return [
+    <Section key="pick" header={<Text>選擇和弦</Text>}
+      footer={<Text>「指定低音」可查詢斜線和弦（分數和弦），例如根音 C、指定低音 G 就是 C/G；低音若為和弦內音，即是轉位和弦。</Text>}>
+      <Picker title="根音" value={s.chordRoot} pickerStyle="menu"
+        onChanged={(v: number) => changeChord({ chordRoot: mod12(v) })}>
+        {NOTE_LABELS.map((r, i) => <Text key={r} tag={i}>{r}</Text>)}
+      </Picker>
+      <Picker title="類型" value={s.chordQuality} pickerStyle="menu"
+        onChanged={(v: string) => { if (isQualityKey(v)) changeChord({ chordQuality: v }) }}>
+        {FINDER_QUALITIES.map((x) => <Text key={x.key} tag={x.key}>{qualityLabel(x.key)}</Text>)}
+      </Picker>
+      <Picker title="指定低音" value={s.chordBass} pickerStyle="menu"
+        onChanged={(v: number) => changeChord({ chordBass: v })}>
+        <Text tag={-1}>無（原位）</Text>
+        {NOTE_LABELS.map((r, i) => <Text key={`b${r}`} tag={i}>{r}</Text>)}
+      </Picker>
+      <Picker title="指法" value={s.scope} pickerStyle="segmented"
+        onChanged={(v: string) => changeChord({ scope: v as Scope })}>
+        <Text tag="open">開放</Text>
+        <Text tag="barre">封閉</Text>
+        <Text tag="both">全部</Text>
+      </Picker>
     </Section>,
 
-    <Section key="chord" header={<Text>{`${shown.numeral}　${shown.name}${shown.voicing ? `・${voicingTitle(shown.voicing)}` : ""}`}</Text>}>
-      {shown.voicing ? (
-        <HStack>
-          <Spacer />
-          <ChordBoard spec={{ frets: shown.voicing.frets, root: shown.root }} prefs={prefs} nm={nm}
-            width={bw} />
-          <Spacer />
-        </HStack>
-      ) : (
-        <Text foregroundStyle="secondaryLabel">這個和弦目前沒有收錄指法，播放時會略過。</Text>
-      )}
+    <Section key="voicings" header={<Text>{naming.title}</Text>}
+      footer={<Text>點選指法即可選用；播放與指彈圖都使用打勾的指法。</Text>}>
+      {voicings.length === 0 ? (
+        <Text foregroundStyle="secondaryLabel">
+          {s.scope === "both"
+            ? "這個和弦目前沒有收錄常用按法"
+            : "這個指法範圍內沒有收錄按法，改選「全部」可查看其他按法"}
+        </Text>
+      ) : voicings.map((v, i) => (
+        <VStack key={`v${i}`} alignment="leading" spacing={6}>
+          <Button title={voicingTitle(v)} buttonStyle="borderless"
+            systemImage={i === chosenIdx ? "checkmark.circle.fill" : "circle"}
+            action={() => chooseVoicing(i)} />
+          <ChordBoard spec={{ frets: v.frets, root: s.chordRoot }} prefs={prefs}
+            nm={noteName(naming.flats)} width={bw} />
+        </VStack>
+      ))}
     </Section>,
   ]
 }
 
 /* ④ UI：節奏分頁 */
-interface Run { readonly startedAt: number; readonly plan: PlayPlan; readonly single: number | null }
+interface Run { readonly startedAt: number; readonly plan: PlayPlan }
 
 // 播放游標的時鐘：約每 60 毫秒回報一次時間，播完自動呼叫 onDone
 // Scripting 沒有 setInterval，改用遞迴 setTimeout
@@ -3156,12 +3146,17 @@ function usePlaybackClock(run: Run | null, onTick: (t: number) => void, onDone: 
 }
 
 
+// 節奏頁的按法清單與目前選用的按法（純函式）
+const rhythmVoicingsOf = (s: RhythmSettings, shapes: readonly string[]): FinderVoicing[] =>
+  voicingsInScope(s.chordRoot, s.chordQuality, s.scope, shapes, s.chordBass)
+const chosenIndexOf = (count: number, idx: number): number =>
+  count === 0 ? -1 : Math.min(Math.max(idx, 0), count - 1)
+
 function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: boolean; layout: Layout }) {
   // 播放請求的序號：停止或重新播放時作廢尚在渲染中的舊請求（Scripting 沒有 useRef，用 useMemo 保存可變容器）
   const ticket = useMemo(() => ({ current: 0 }), [])
   const initialRhythm = useMemo(() => rhythmRepository.load(), [])
   const [s, setS] = useState<RhythmSettings>(initialRhythm)
-  const [selected, setSelected] = useState<number>(0)
   const [run, setRun] = useState<Run | null>(null)
   const [now, setNow] = useState<number>(0)
   const patch = (p: Partial<RhythmSettings>) => setS((v) => ({ ...v, ...p }))
@@ -3176,23 +3171,21 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
     ticket.current++
     synth.stop()
     setRun(null)
-  }, [s.kind, s.beats, s.strumPattern, s.pickKey, s.bpm, s.tonic, s.mode, s.progKey, s.prefer, s.bars, s.repeats])
+  }, [s.kind, s.beats, s.strumPattern, s.pickKey, s.bpm, s.chordRoot, s.chordQuality, s.chordBass,
+    s.scope, s.voicingIdx, s.bars, s.repeats])
 
   usePlaybackClock(run, setNow, () => setRun(null))
 
-  /* ── 調性與和弦進行 ── */
-  const keySig: Key = { tonic: s.tonic, mode: s.mode }
-  const flats = resolveFlats(prefs.accidental, prefersFlats(keySig))
-  const nm = noteName(flats)
-  const keyTitle = keyTitleOf(keySig, flats)
-  const progs = progsOf(s.mode)
-  const progIdx = Math.max(0, progs.findIndex((p) => p.key === s.progKey))
-  const prog = progs[progIdx]
-  const chords = useMemo(
-    () => resolveProgression(keySig, prog, s.prefer, flats, prefs.barreShapes),
-    [s.tonic, s.mode, prog.key, s.prefer, flats, prefs.barreShapes.join(",")],
+  /* ── 和弦與指法 ── */
+  const shapesKey = prefs.barreShapes.join(",")
+  const naming = chordNaming(s.chordRoot, s.chordQuality, s.chordBass, prefs.accidental)
+  const voicings = useMemo(
+    () => rhythmVoicingsOf(s, prefs.barreShapes),
+    [s.chordRoot, s.chordQuality, s.chordBass, s.scope, shapesKey],
   )
-  const selIdx = Math.min(selected, chords.length - 1)
+  const chosenIdx = chosenIndexOf(voicings.length, s.voicingIdx)
+  const chosen = chosenIdx >= 0 ? voicings[chosenIdx] : undefined
+  const frets: readonly Fret[] = chosen ? chosen.frets : []
 
   /* ── 節奏型態 ── */
   const strumTemplates = STRUM_TEMPLATES.filter((t) => t.beats === s.beats)
@@ -3209,23 +3202,18 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
   )
 
   /* ── 播放計畫與游標 ── */
-  const framesOf = (c: ProgChord): readonly Fret[] => (c.voicing ? c.voicing.frets : [])
-  const makePlan = (cs: readonly ProgChord[]): PlayPlan => ({
-    chords: cs.map(framesOf), pattern, bpm: s.bpm, barsPerChord: s.bars, repeats: s.repeats,
-  })
-  const songPlan = makePlan(chords)
-  const songSeconds = Math.round(runSeconds(songPlan))
-  const capped = effectiveRepeats(songPlan) < s.repeats
+  const plan: PlayPlan = {
+    chords: chosen ? [frets] : [], pattern, bpm: s.bpm, barsPerChord: s.bars, repeats: s.repeats,
+  }
+  const playSeconds = Math.round(runSeconds(plan))
+  const capped = effectiveRepeats(plan) < s.repeats
 
   const head = run ? playheadAt(run.plan, (now - run.startedAt) / 1000) : null
-  const shownIdx = run && head ? (run.single ?? head.chord) : selIdx
-  const shown = chords[Math.min(shownIdx, chords.length - 1)]
   const currentSlot = head ? head.slot : -1
-  const shownFrets = framesOf(shown)
 
   /* ── 動作 ── */
-  const start = async (plan: PlayPlan, single: number | null) => {
-    if (!prefs.soundOn) return
+  const play = async () => {
+    if (!prefs.soundOn || !chosen) return
     haptic(prefs, "light")
     const mine = ++ticket.current
     setRun(null)
@@ -3233,17 +3221,22 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
     if (mine !== ticket.current) return
     const t = Date.now() + 120 // 音訊從準備好到真正出聲約有一點延遲
     setNow(t)
-    setRun({ startedAt: t, plan, single })
+    setRun({ startedAt: t, plan })
   }
-  const audition = (i: number) =>
-    start({ ...makePlan([chords[i]]), barsPerChord: 2, repeats: 1 }, i)
-  const playSong = () => start(songPlan, null)
   const stop = () => { ticket.current++; synth.stop(); setRun(null) }
 
-  const choose = (i: number) => {
-    setSelected(i)
+  // 換和弦或指法範圍時回到第一個按法，並依設定試聽
+  const changeChord = (p: Partial<RhythmSettings>) => {
+    patch({ ...p, voicingIdx: 0 })
+    if (prefs.soundOn && prefs.autoPlay) {
+      const first = rhythmVoicingsOf({ ...s, ...p, voicingIdx: 0 }, prefs.barreShapes)[0]
+      if (first) playChord(first.frets, prefs.playStyle)
+    }
+  }
+  const chooseVoicing = (i: number) => {
+    patch({ voicingIdx: i })
     haptic(prefs, "light")
-    if (prefs.soundOn && prefs.autoPlay) void audition(i)
+    if (prefs.soundOn && prefs.autoPlay && voicings[i]) playChord(voicings[i].frets, prefs.playStyle)
   }
   const tapStroke = (i: number) => {
     const strokes = parseStrum(s.strumPattern)
@@ -3251,7 +3244,7 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
     haptic(prefs, "light")
     patch({ strumPattern: next.join("") })
     if (prefs.soundOn && next[i] !== "-") {
-      void synth.playEvents(strumSlotEvents(framesOf(chords[selIdx]), next[i], i, 0, slotSeconds(s.bpm), 1))
+      void synth.playEvents(strumSlotEvents(frets, next[i], i, 0, slotSeconds(s.bpm), 1))
     }
   }
   const changeBeats = (beats: number) =>
@@ -3268,24 +3261,20 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
     ? "↓ 下刷　↑ 上刷　× 悶音切刷　· 休止符。輕點格子可直接修改。"
     : notationLegend(s.notation)
 
-  // 左欄：節奏型態、播放、調性與進行；右欄：節奏圖與目前和弦指法
+  // 左欄：節奏型態、播放；右欄：節奏圖，最底是選擇和弦與指法圖
   const leftSections: JSX.Element[] = [
     rhythmTypeSection({ s, strumKey, strumTemplates, pickTemplates, patch, changeBeats }),
   ]
-
   if (prefs.soundOn) {
     leftSections.push(
-      rhythmPlaySection({ s, songSeconds, capped, selIdx, nudgeBpm, audition, playSong, stop }),
+      rhythmPlaySection({ s, playSeconds, capped, canPlay: !!chosen, nudgeBpm, patch, play, stop }),
     )
   }
 
-  leftSections.push(
-    rhythmProgSection({ s, layout, keyTitle, prog, progs, progIdx, chords, shownIdx, patch, setSelected, choose }),
-  )
-
-  const rightSections = rhythmGridSections({
-    s, prefs, bw, pattern, currentSlot, shown, shownFrets, nm, gridHint, gridLegend, tapStroke,
-  })
+  const rightSections: JSX.Element[] = [
+    rhythmGridSection({ s, prefs, bw, pattern, currentSlot, frets, gridHint, gridLegend, tapStroke }),
+    ...rhythmChordSections({ s, prefs, bw, naming, voicings, chosenIdx, changeChord, chooseVoicing }),
+  ]
 
   return <SplitList layout={layout} left={leftSections} right={rightSections} />
 }
@@ -3484,11 +3473,12 @@ const parseDrill = (raw: unknown, legacy: readonly unknown[]): Result<string, Dr
   return old ? ok({ best: old.best }) : err("沒有已儲存的練習紀錄")
 }
 
-const parseRhythm = (raw: unknown): Result<string, RhythmSettings> => {
-  if (!isRecord(raw)) return err("沒有已儲存的節奏設定")
-  const m = { ...DEFAULT_RHYTHM, ...raw } as RhythmSettings
+// legacy：v1 的節奏設定（伴奏是和弦進行）；只沿用節奏型態、速度、小節數與重複
+const parseRhythm = (raw: unknown, legacy?: unknown): Result<string, RhythmSettings> => {
+  const src = isRecord(raw) ? raw : isRecord(legacy) ? legacy : undefined
+  if (!src) return err("沒有已儲存的節奏設定")
+  const m = { ...DEFAULT_RHYTHM, ...src } as RhythmSettings
   const beats = m.beats === 3 ? 3 : 4
-  const mode: KeyMode = m.mode === "minor" ? "minor" : "major"
   return ok({
     kind: m.kind === "pick" ? "pick" : "strum",
     beats,
@@ -3497,10 +3487,12 @@ const parseRhythm = (raw: unknown): Result<string, RhythmSettings> => {
       ? m.pickKey : firstPick(beats).key,
     notation: isFingerNotation(m.notation) ? m.notation : "pima",
     bpm: typeof m.bpm === "number" ? clampBpm(m.bpm) : DEFAULT_RHYTHM.bpm,
-    tonic: mod12(typeof m.tonic === "number" ? m.tonic : 0),
-    mode,
-    progKey: progsOf(mode).some((p) => p.key === m.progKey) ? m.progKey : progsOf(mode)[0].key,
-    prefer: m.prefer === "barre" ? "barre" : "open",
+    chordRoot: mod12(typeof m.chordRoot === "number" ? m.chordRoot : 0),
+    chordQuality: isQualityKey(m.chordQuality) ? m.chordQuality : "maj",
+    chordBass: typeof m.chordBass === "number" && m.chordBass >= 0 && m.chordBass <= 11
+      ? Math.floor(m.chordBass) : -1,
+    scope: m.scope === "open" || m.scope === "barre" || m.scope === "both" ? m.scope : "open",
+    voicingIdx: typeof m.voicingIdx === "number" && m.voicingIdx >= 0 ? Math.floor(m.voicingIdx) : 0,
     bars: m.bars === 2 ? 2 : 1,
     repeats: REPEAT_OPTIONS.includes(m.repeats) ? m.repeats : DEFAULT_RHYTHM.repeats,
   })
@@ -3561,9 +3553,14 @@ const drillRepository = {
 }
 
 // 節奏分頁
-const RHYTHM_KEY = "rhythm.settings.v1"
+const RHYTHM_KEY = "rhythm.settings.v2"
+const LEGACY_RHYTHM_KEY = "rhythm.settings.v1" // 舊版以和弦進行伴奏；沿用節奏型態與速度
 const rhythmRepository = {
-  load: (): RhythmSettings => unwrapOr(parseRhythm(readStored(RHYTHM_KEY)), DEFAULT_RHYTHM),
+  load: (): RhythmSettings => {
+    const saved = readStored(RHYTHM_KEY)
+    const legacy = isRecord(saved) ? undefined : readStored(LEGACY_RHYTHM_KEY)
+    return unwrapOr(parseRhythm(saved, legacy), DEFAULT_RHYTHM)
+  },
   save: (r: RhythmSettings): void => writeStored(RHYTHM_KEY, r),
 }
 
@@ -3789,7 +3786,7 @@ export {
   getVoicings, getSlashVoicings, voicingsInScope, voicingTitle, qualityLabel, QUALITY_TEXT, resolveFingering,
   diatonicChords, resolveProgression, MAJOR_PROGS,
   finderSections, progressionSections, practiceSections, rhythmTypeSection, rhythmPlaySection,
-  rhythmProgSection, rhythmGridSections, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, practiceChordsOfProgression,
+  rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, practiceChordsOfProgression,
   parsePrefs, parseHub, parseDrill, parseRhythm, assertNever, unwrapOr, ok, err, prefsRepository, hubRepository,
   TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH,
   cellHeightFor,
