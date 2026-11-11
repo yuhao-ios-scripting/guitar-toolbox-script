@@ -26,7 +26,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4] // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.0.1"
+const APP_VERSION = "0.0.2"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -1717,40 +1717,40 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
 }
 
 /* ════════════════════════════════════════════════
- * ② Pattern 1–5 找音／認音：Domain
- * Pattern = 音階的五個把位。以 C 大調為準，依序為第 0–3、2–5、5–8、7–10、9–12 格，
+ * ② 把位 1–5 找音／認音：Domain
+ * 把位是音階在指板上的五個區域。以 C 大調為準，依序為第 0–3、2–5、5–8、7–10、9–12 格，
  * 其他主音則整組平移；平移後超過第 12 格就改用低八度，低於第 0 格的部分裁掉。
  * 範圍只依主音決定，音階類型（大調、小調、五聲音階…）只決定範圍內有哪些音。
  * ════════════════════════════════════════════════ */
 const OPEN_PC: Record<StringNo, PitchClass> = { 6: 4, 5: 9, 4: 2, 3: 7, 2: 11, 1: 4 }
 const pitchAt = (s: StringNo, fret: number): PitchClass => mod12(OPEN_PC[s] + fret)
 
-type PatternNo = 1 | 2 | 3 | 4 | 5
-const PATTERN_NOS: readonly PatternNo[] = [1, 2, 3, 4, 5]
-const PATTERN_START_AT_C: Record<PatternNo, number> = { 1: 0, 2: 2, 3: 5, 4: 7, 5: 9 }
-const PATTERN_WIDTH = 4
-const MAX_PATTERN_FRET = 12
+type ScalePositionNo = 1 | 2 | 3 | 4 | 5
+const SCALE_POSITION_NOS: readonly ScalePositionNo[] = [1, 2, 3, 4, 5]
+const SCALE_POSITION_START_AT_C: Record<ScalePositionNo, number> = { 1: 0, 2: 2, 3: 5, 4: 7, 5: 9 }
+const SCALE_POSITION_WIDTH = 4
+const MAX_POSITION_FRET = 12
 
 interface FretRange { readonly from: number; readonly to: number }
-const patternRange = (no: PatternNo, root: PitchClass): FretRange => {
-  const start = PATTERN_START_AT_C[no] + mod12(root)
-  const end = start + PATTERN_WIDTH - 1
-  const shift = end > MAX_PATTERN_FRET ? 12 : 0
+const scalePositionRange = (no: ScalePositionNo, root: PitchClass): FretRange => {
+  const start = SCALE_POSITION_START_AT_C[no] + mod12(root)
+  const end = start + SCALE_POSITION_WIDTH - 1
+  const shift = end > MAX_POSITION_FRET ? 12 : 0
   return { from: Math.max(0, start - shift), to: end - shift }
 }
 const rangeLabel = (r: FretRange): string => `第 ${r.from}–${r.to} 格`
 
 interface Position { readonly string: StringNo; readonly fret: number }
 interface Zone {
-  readonly pattern: PatternNo
+  readonly scalePosition: ScalePositionNo
   readonly keyPc: PitchClass
   readonly scale: ScaleDef
   readonly fromFret: number
   readonly toFret: number
 }
-const zoneOf = (pattern: PatternNo, keyPc: PitchClass, scale: ScaleDef): Zone => {
-  const r = patternRange(pattern, keyPc)
-  return { pattern, keyPc, scale, fromFret: r.from, toFret: r.to }
+const zoneOf = (scalePosition: ScalePositionNo, keyPc: PitchClass, scale: ScaleDef): Zone => {
+  const r = scalePositionRange(scalePosition, keyPc)
+  return { scalePosition, keyPc, scale, fromFret: r.from, toFret: r.to }
 }
 const zoneFrets = (z: Zone): number[] =>
   Array.from({ length: z.toFret - z.fromFret + 1 }, (_, i) => z.fromFret + i)
@@ -1758,11 +1758,11 @@ const zonePositions = (z: Zone): Position[] =>
   STRINGS.flatMap(s => zoneFrets(z).map(fret => ({ string: s, fret })))
 const intervalAt = (z: Zone, p: Position): number => mod12(pitchAt(p.string, p.fret) - z.keyPc)
 // 範圍內屬於音階的位置（出題只從這裡挑）
-const scalePositions = (z: Zone): Position[] =>
+const scaleTonePositions = (z: Zone): Position[] =>
   zonePositions(z).filter(p => z.scale.intervals.includes(intervalAt(z, p)))
 // 範圍內的和弦音（1・3・5，依音階實際有的音）
 const chordTonePositions = (z: Zone): Position[] =>
-  scalePositions(z).filter(p => CHORD_TONE_INTERVALS.includes(intervalAt(z, p)))
+  scaleTonePositions(z).filter(p => CHORD_TONE_INTERVALS.includes(intervalAt(z, p)))
 const samePos = (a: Position, b: Position) => a.string === b.string && a.fret === b.fret
 const playPosition = (p: Position): void => playNote(STRING_COUNT - p.string, p.fret)
 
@@ -1777,7 +1777,7 @@ interface Question {
 }
 
 const makeQuestion = (mode: DrillMode, zone: Zone, seed: number): [Question, number] => {
-  const [position, next] = pick(scalePositions(zone), seed)
+  const [position, next] = pick(scaleTonePositions(zone), seed)
   const pc = pitchAt(position.string, position.fret)
   return mode === "nameNote"
     ? [{ mode, zone, position, answer: pc, choices: ALL_PCS }, next]
@@ -1801,7 +1801,7 @@ interface Score { readonly correct: number; readonly total: number; readonly str
 interface DrillSession {
   readonly keyPc: PitchClass
   readonly scaleIdx: number
-  readonly pattern: PatternNo
+  readonly scalePosition: ScalePositionNo
   readonly mode: DrillMode
   readonly seed: number
   readonly question: Question
@@ -1812,14 +1812,14 @@ type DrillAction =
   | { type: "answer"; value: number }
   | { type: "tap"; position: Position }
   | { type: "next" }
-  | { type: "configure"; keyPc?: PitchClass; scaleIdx?: number; pattern?: PatternNo; mode?: DrillMode }
+  | { type: "configure"; keyPc?: PitchClass; scaleIdx?: number; scalePosition?: ScalePositionNo; mode?: DrillMode }
 
 const newDrillSession = (
-  keyPc: PitchClass, scaleIdx: number, pattern: PatternNo, mode: DrillMode, seed: number,
+  keyPc: PitchClass, scaleIdx: number, scalePosition: ScalePositionNo, mode: DrillMode, seed: number,
 ): DrillSession => {
-  const [question, nextSeed] = makeQuestion(mode, zoneOf(pattern, keyPc, SCALES[scaleIdx]), seed)
+  const [question, nextSeed] = makeQuestion(mode, zoneOf(scalePosition, keyPc, SCALES[scaleIdx]), seed)
   return {
-    keyPc, scaleIdx, pattern, mode, seed: nextSeed, question,
+    keyPc, scaleIdx, scalePosition, mode, seed: nextSeed, question,
     score: { correct: 0, total: 0, streak: 0 }, feedback: null,
   }
 }
@@ -1854,12 +1854,12 @@ const drillReduce = (s: DrillSession, a: DrillAction): DrillSession => {
     }
     case "configure":
       return newDrillSession(
-        a.keyPc ?? s.keyPc, a.scaleIdx ?? s.scaleIdx, a.pattern ?? s.pattern, a.mode ?? s.mode, s.seed,
+        a.keyPc ?? s.keyPc, a.scaleIdx ?? s.scaleIdx, a.scalePosition ?? s.scalePosition, a.mode ?? s.mode, s.seed,
       )
   }
 }
 
-/* ② Infrastructure：記住最佳連對（主音、音階類型與 Pattern 由音階分頁共用，不另外儲存） */
+/* ② Infrastructure：記住最佳連對（主音、音階類型與把位由音階分頁共用，不另外儲存） */
 interface DrillSaved { best: number }
 const DRILL_KEY = "fretboard.drill.v4"
 const LEGACY_DRILL_KEYS: readonly string[] = ["fretboard.drill.v3", "fretboard.drill.v2", "fretboard.drill.v1"] // 只沿用最佳連對
@@ -1934,15 +1934,15 @@ interface DrillProps {
   readonly mode: DrillMode          // 找音或認音，由音階分頁的頁面決定
   readonly root: PitchClass         // 與音階瀏覽共用
   readonly scaleIdx: number         // 與音階瀏覽共用
-  readonly pattern: PatternNo       // 與音階瀏覽共用
+  readonly scalePosition: ScalePositionNo       // 與音階瀏覽共用
   readonly onRoot: (v: number) => void
   readonly onScale: (v: number) => void
-  readonly onPattern: (v: PatternFilter) => void
+  readonly onScalePosition: (v: ScalePositionFilter) => void
 }
 
-function FretboardDrill({ prefs, layout, mode, root, scaleIdx, pattern, onRoot, onScale, onPattern }: DrillProps) {
+function FretboardDrill({ prefs, layout, mode, root, scaleIdx, scalePosition, onRoot, onScale, onScalePosition }: DrillProps) {
   const [session, setSession] = useState<DrillSession>(() =>
-    newDrillSession(root, scaleIdx, pattern, mode, Date.now() | 0))
+    newDrillSession(root, scaleIdx, scalePosition, mode, Date.now() | 0))
   const [best, setBest] = useState<number>(initialDrill.best)
   const [showNames, setShowNames] = useState<boolean>(DEFAULT_DRILL_UI.showNames)
   const [showTonesFind, setShowTonesFind] = useState<boolean>(DEFAULT_DRILL_UI.showTonesFind)
@@ -1952,12 +1952,12 @@ function FretboardDrill({ prefs, layout, mode, root, scaleIdx, pattern, onRoot, 
     drillRepository.save({ best })
   }, [best])
 
-  // 主音、音階類型、Pattern（與音階瀏覽共用）或頁面（找音／認音）改變時，重新出題
+  // 主音、音階類型、把位（與音階瀏覽共用）或頁面（找音／認音）改變時，重新出題
   useEffect(() => {
-    setSession((s) => (s.keyPc === root && s.scaleIdx === scaleIdx && s.pattern === pattern && s.mode === mode)
+    setSession((s) => (s.keyPc === root && s.scaleIdx === scaleIdx && s.scalePosition === scalePosition && s.mode === mode)
       ? s
-      : newDrillSession(root, scaleIdx, pattern, mode, s.seed))
-  }, [root, scaleIdx, pattern, mode])
+      : newDrillSession(root, scaleIdx, scalePosition, mode, s.seed))
+  }, [root, scaleIdx, scalePosition, mode])
 
   const dispatch = (a: DrillAction) => {
     const next = drillReduce(session, a)
@@ -2004,10 +2004,10 @@ function FretboardDrill({ prefs, layout, mode, root, scaleIdx, pattern, onRoot, 
   const boardWidth = Math.max(240, layout.paneWidth - 48)
   const choiceCols = layout.paneWidth >= 600 ? 6 : 4
 
-  // 控制區上半：主音、音階類型、Pattern（與音階瀏覽相同的選單，設定共用）
+  // 控制區上半：主音、音階類型、把位（與音階瀏覽相同的選單，設定共用）
   const controlsTop = (
     <VStack spacing={16}>
-      {scalePickers({ root, scaleIdx, pattern, allowAll: false, onRoot, onScale, onPattern })}
+      {scalePickers({ root, scaleIdx, scalePosition, allowAll: false, onRoot, onScale, onScalePosition })}
     </VStack>
   )
 
@@ -2015,7 +2015,7 @@ function FretboardDrill({ prefs, layout, mode, root, scaleIdx, pattern, onRoot, 
   const quiz = (
     <VStack spacing={16}>
       <Text font="subheadline" foregroundStyle="secondaryLabel">
-        {`${nm(root)} ${scale.label}・Pattern ${session.pattern}・第 ${q.zone.fromFret}–${q.zone.toFret} 格${showTones ? "　圓點＝和弦音（1・3・5）" : ""}`}
+        {`${nm(root)} ${scale.label}・把位 ${session.scalePosition}・第 ${q.zone.fromFret}–${q.zone.toFret} 格${showTones ? "　圓點＝和弦音（1・3・5）" : ""}`}
       </Text>
 
       <Fretboard
@@ -2174,20 +2174,20 @@ interface ScaleExplorerProps {
   readonly layout: Layout
   readonly root: PitchClass         // 與找音、認音共用
   readonly scaleIdx: number         // 與找音、認音共用
-  readonly pattern: PatternFilter   // 與找音、認音共用
+  readonly scalePosition: ScalePositionFilter   // 與找音、認音共用
   readonly onRoot: (v: number) => void
   readonly onScale: (v: number) => void
-  readonly onPattern: (v: PatternFilter) => void
+  readonly onScalePosition: (v: ScalePositionFilter) => void
 }
 
-// pattern = 0 代表「全部」：依起始格與顯示格數顯示；1–5 則固定顯示該 Pattern 的格數範圍
-type PatternFilter = 0 | PatternNo
+// scalePosition = 0 代表「全部」：依起始格與顯示格數顯示；1–5 則固定顯示該把位的格數範圍
+type ScalePositionFilter = 0 | ScalePositionNo
 
-// 主音、音階類型、Pattern 三個選單：音階瀏覽與找音、認音共用同一組 UI 與設定
-// allowAll：是否提供「全部」（找音、認音一定要選定某個 Pattern）
+// 主音、音階類型、把位三個選單：音階瀏覽與找音、認音共用同一組 UI 與設定
+// allowAll：是否提供「全部」（找音、認音一定要選定某個把位）
 function scalePickers(p: {
-  root: PitchClass; scaleIdx: number; pattern: PatternFilter; allowAll: boolean
-  onRoot: (v: number) => void; onScale: (v: number) => void; onPattern: (v: PatternFilter) => void
+  root: PitchClass; scaleIdx: number; scalePosition: ScalePositionFilter; allowAll: boolean
+  onRoot: (v: number) => void; onScale: (v: number) => void; onScalePosition: (v: ScalePositionFilter) => void
 }): JSX.Element[] {
   return [
     <Picker key="root" title="主音" value={p.root} pickerStyle="menu"
@@ -2198,20 +2198,20 @@ function scalePickers(p: {
       onChanged={(v: number) => p.onScale(v)}>
       {SCALES.map((sc, i) => <Text key={sc.key} tag={i}>{sc.label}</Text>)}
     </Picker>,
-    <Picker key="pattern" title="Pattern" value={p.pattern} pickerStyle="menu"
-      onChanged={(v: number) => p.onPattern(v as PatternFilter)}>
+    <Picker key="scalePosition" title="把位" value={p.scalePosition} pickerStyle="menu"
+      onChanged={(v: number) => p.onScalePosition(v as ScalePositionFilter)}>
       {p.allowAll ? <Text tag={0}>全部（自訂範圍）</Text> : null}
-      {PATTERN_NOS.map((n) => (
-        <Text key={n} tag={n}>{`Pattern ${n}（${rangeLabel(patternRange(n, p.root))}）`}</Text>
+      {SCALE_POSITION_NOS.map((n) => (
+        <Text key={n} tag={n}>{`把位 ${n}（${rangeLabel(scalePositionRange(n, p.root))}）`}</Text>
       ))}
     </Picker>,
   ]
 }
 
-function ScaleExplorer({ prefs, layout, root, scaleIdx, pattern, onRoot, onScale, onPattern }: ScaleExplorerProps) {
+function ScaleExplorer({ prefs, layout, root, scaleIdx, scalePosition, onRoot, onScale, onScalePosition }: ScaleExplorerProps) {
   const [customStart, setStartFret] = useState<number>(DEFAULT_SCALE.startFret)
   const [customRows, setRows] = useState<number>(layout.defaultScaleRows)
-  const pr = pattern === 0 ? null : patternRange(pattern, root)
+  const pr = scalePosition === 0 ? null : scalePositionRange(scalePosition, root)
   const startFret = pr ? pr.from : customStart
   const rows = pr ? pr.to - pr.from + 1 : customRows
   const [label, setLabel] = useState<LabelMode>(DEFAULT_SCALE.label)
@@ -2254,10 +2254,10 @@ function ScaleExplorer({ prefs, layout, root, scaleIdx, pattern, onRoot, onScale
       left={[
         <Section key="scale" header={<Text>音階</Text>}>
           {scalePickers({
-            root, scaleIdx, pattern, allowAll: true,
+            root, scaleIdx, scalePosition, allowAll: true,
             onRoot: (v) => { onRoot(v); audition(v, scaleIdx) },
             onScale: (v) => { onScale(v); audition(root, v) },
-            onPattern,
+            onScalePosition,
           })}
         </Section>,
 
@@ -2310,7 +2310,7 @@ function ScaleExplorer({ prefs, layout, root, scaleIdx, pattern, onRoot, onScale
         </Section>,
       ]}
       right={[
-        <Section key="board" header={<Text>{`${nm(root)} ${scale.label}${pattern === 0 ? "" : `・Pattern ${pattern}`}・第 ${startFret}–${lastFret} 格`}</Text>}>
+        <Section key="board" header={<Text>{`${nm(root)} ${scale.label}${scalePosition === 0 ? "" : `・把位 ${scalePosition}`}・第 ${startFret}–${lastFret} 格`}</Text>}>
           <HStack>
             <Spacer />
             <Fretboard startFret={startFret} rows={rows} marks={marks} prefs={boardPrefs}
@@ -2327,20 +2327,20 @@ function ScaleExplorer({ prefs, layout, root, scaleIdx, pattern, onRoot, onScale
 }
 
 /* ════════════════════════════════════════════════
- * ③ 音階分頁：音階瀏覽與 Pattern 練習合併在同一個分頁，用分段選單切換
+ * ③ 音階分頁：音階瀏覽與把位練習合併在同一個分頁，用分段選單切換
  * ════════════════════════════════════════════════ */
 type ScaleTabPage = "browse" | "findNote" | "nameNote"
 
 function ScaleTab({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   const [page, setPage] = useState<ScaleTabPage>("browse")
-  // 三個頁面共用主音、音階類型與 Pattern
+  // 三個頁面共用主音、音階類型與 把位
   const [root, setRoot] = useState<PitchClass>(DEFAULT_SCALE.root)
   const [scaleIdx, setScaleIdx] = useState<number>(defaultScaleIndex)
-  const [pattern, setPattern] = useState<PatternFilter>(0)
-  // 找音、認音一定要選定某個 Pattern；從「全部」切換過去時先用 Pattern 1
+  const [scalePosition, setScalePosition] = useState<ScalePositionFilter>(0)
+  // 找音、認音一定要選定某個把位；從「全部」切換過去時先用 把位 1
   const change = (p: ScaleTabPage) => {
     synth.stop()
-    if (p !== "browse" && pattern === 0) setPattern(1)
+    if (p !== "browse" && scalePosition === 0) setScalePosition(1)
     setPage(p)
   }
   return (
@@ -2353,11 +2353,11 @@ function ScaleTab({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
       </Picker>
       {page === "browse"
         ? <ScaleExplorer prefs={prefs} layout={layout}
-            root={root} scaleIdx={scaleIdx} pattern={pattern}
-            onRoot={setRoot} onScale={setScaleIdx} onPattern={setPattern} />
+            root={root} scaleIdx={scaleIdx} scalePosition={scalePosition}
+            onRoot={setRoot} onScale={setScaleIdx} onScalePosition={setScalePosition} />
         : <FretboardDrill prefs={prefs} layout={layout} mode={page}
-            root={root} scaleIdx={scaleIdx} pattern={pattern === 0 ? 1 : pattern}
-            onRoot={setRoot} onScale={setScaleIdx} onPattern={setPattern} />}
+            root={root} scaleIdx={scaleIdx} scalePosition={scalePosition === 0 ? 1 : scalePosition}
+            onRoot={setRoot} onScale={setScaleIdx} onScalePosition={setScalePosition} />}
     </VStack>
   )
 }

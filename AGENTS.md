@@ -8,7 +8,7 @@ Read agentflow's `references/project-rules.md` from the resolved skill or exact 
 
 # 專案指引｜Guitar Toolbox Script
 
-本專案是在 **Scripting app**（iOS / iPadOS）上執行的**吉他工具腳本集**：目前有和弦速查／進行／練習、音階（瀏覽、Pattern 1–5 找音與認音）、節奏（刷弦與指彈）；調音器、移調、五度圈等為構想。
+本專案是在 **Scripting app**（iOS / iPadOS）上執行的**吉他工具腳本集**：目前有和弦速查／進行／練習、音階（瀏覽、把位 1–5 找音與認音）、節奏（刷弦與指彈）；調音器、移調、五度圈等為構想。
 
 本文件供所有 AI agent 與協作者遵循。人類導向的介紹請見 [README.md](README.md)。
 
@@ -44,7 +44,7 @@ scripts/src/
 | 分頁（TabView） | 內容 | Domain 型別／函式（節錄） |
 |---|---|---|
 | 和弦 | 和弦速查、和弦進行、和弦練習 | `Chord`、`ChordQuality`、`FinderVoicing`、`resolveFingering` |
-| 音階 | 分段選單三頁：瀏覽（可依 Pattern 篩選）、找音、認音；共用主音、音階類型與 Pattern（`scalePickers`） | `ScaleDef`、`SCALES`；`PatternNo`、`patternRange`、`Zone`、`zoneOf`、`scalePositions`、`chordTonePositions` |
+| 音階 | 分段選單三頁：瀏覽（可依把位篩選）、找音、認音；共用主音、音階類型與把位（`scalePickers`） | `ScaleDef`、`SCALES`；`ScalePositionNo`、`scalePositionRange`、`Zone`、`zoneOf`、`scaleTonePositions`、`chordTonePositions` |
 | 節奏 | 刷弦與指彈節奏型態、播放 | `Stroke`、`PickRole`、`RhythmPattern`、`PlayPlan`、`NoteEvent` |
 | 設定（Sheet） | 指板樣式、聲音、觸覺偏好 | `DiagramPrefs`、`DEFAULT_PREFS` |
 
@@ -152,6 +152,7 @@ scripts/src/
 | chord progression | 和弦進行 |
 | voicing / fingering shape | 按法（和弦配置）／指型 |
 | arpeggio | 琶音（分解和弦） |
+| scale position (`ScalePosition`) | 把位（音階在指板上的五個區域；程式中避免與指板上的點 `Position` 混淆） |
 | open chord | 開放和弦 |
 | barre chord | 封閉和弦（橫按） |
 
@@ -289,7 +290,7 @@ scripts/src/
 | 第一個穩定版本 | 擁有者決定後升為 `1.0.0` |
 | 只改文件、設定或開發紀錄，且 app 行為完全不變 | 可不調整，並在 commit 訊息註明 |
 
-版本號碼須**同步**更新三處：`index.tsx` 的 `APP_VERSION`（設定頁顯示）、`package.json` 的 `version`、`package-lock.json` 的 `version`（根項目兩處）。commit 訊息標題建議附上新版本，例如 `feat: Pattern 練習 (0.1.0)`。
+版本號碼須**同步**更新三處：`index.tsx` 的 `APP_VERSION`（設定頁顯示）、`package.json` 的 `version`、`package-lock.json` 的 `version`（根項目兩處）。commit 訊息標題建議附上新版本，例如 `feat: 把位練習 (0.1.0)`。
 
 ## 9. 禁止事項
 
