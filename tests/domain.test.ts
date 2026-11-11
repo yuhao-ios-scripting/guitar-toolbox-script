@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, diatonicChords, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, DEFAULT_HUB, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -153,5 +153,39 @@ describe("文案（UI 層）", () => {
       ({ type: "shape", shape: "E", fret, variant }) as const
     expect(voicingTitle({ origin: shape(0, false), rebassed: false })).toBe("E 型")
     expect(voicingTitle({ origin: shape(3, true), rebassed: true })).toBe("E 型封閉（第 3 格）・變化・換低音")
+  })
+})
+
+describe("和弦分頁的用例函式", () => {
+  it("effectiveBass：未指定或等於根音時為 -1", () => {
+    expect(effectiveBass(mod12(0), -1)).toBe(-1)
+    expect(effectiveBass(mod12(0), 0)).toBe(-1)
+    expect(effectiveBass(mod12(0), 7)).toBe(7)
+  })
+  it("keyTitleOf：調名與大小調", () => {
+    expect(keyTitleOf({ tonic: mod12(5), mode: "major" }, true)).toBe("F 大調")
+    expect(keyTitleOf({ tonic: mod12(9), mode: "minor" }, false)).toBe("A 自然小調")
+  })
+  it("finderViewOf：斜線和弦標題與降記號偏好", () => {
+    const v = finderViewOf({ ...DEFAULT_HUB, finderRoot: mod12(0), finderQuality: "maj", finderBass: 7 }, "auto")
+    expect(v.title).toBe("C/G")
+    const m = finderViewOf({ ...DEFAULT_HUB, finderRoot: mod12(10), finderQuality: "m7", finderBass: -1 }, "auto")
+    expect(m.title).toBe("Bbm7")
+    const sharp = finderViewOf({ ...DEFAULT_HUB, finderRoot: mod12(10), finderQuality: "maj", finderBass: -1 }, "sharp")
+    expect(sharp.title).toBe("A#")
+  })
+  it("stepIndex：環狀前進與後退，空清單回 0", () => {
+    expect(stepIndex(0, 5, -1)).toBe(4)
+    expect(stepIndex(4, 5, 1)).toBe(0)
+    expect(stepIndex(7, 5, 1)).toBe(3)
+    expect(stepIndex(0, 0, 1)).toBe(0)
+  })
+  it("progressionSeconds：4 和弦 × 4 拍 @ 80 BPM = 12 秒", () => {
+    expect(progressionSeconds(4, 4, 80)).toBe(12)
+  })
+  it("practiceDeckOf：依調內級數與類型出題；每題都符合所選類型", () => {
+    const deck = practiceDeckOf(DEFAULT_HUB, [], ["E", "A", "D"])
+    expect(deck.voicings.length).toBeGreaterThan(0)
+    deck.voicings.forEach((v) => expect(DEFAULT_HUB.qualities).toContain(v.chord.quality))
   })
 })

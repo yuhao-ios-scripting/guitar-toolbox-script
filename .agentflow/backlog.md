@@ -3,6 +3,6 @@
 Actionable future work, not an execution queue. Entries are proposed (inferred) or deferred (owner accepted for later); scheduling needs owner authority. Each B-NNN item records source/Ask, intended outcome, open reason and expected effort or next decision. Record proved completion in the notebook before removing the entry.
 
 - B-001（proposed，A-017；A-019 已完成 `QualityKey` 與 `PitchClass`）：剩下 `Fret` 的 branded type。待決定：改動面大，是否值得。
-- B-003（proposed，A-017）：把 Hub／練習／節奏的 `Storage` 存取與 reducer 歸位到 Infrastructure／Application 區塊，並拆小 `ChordHub`、`RhythmStudio`。
+- B-003（proposed，A-017；A-020 已完成儲存集中與純函式抽出）：剩下把 `ChordHub`、`RhythmStudio` 的 JSX 區塊拆成獨立元件。待決定：實機驗證後再做。
 - B-004（proposed，A-017）：引入 `Result`／`Option` 與 `assertNever`，用於偏好載入與 3 個 `switch`。
 - B-005（proposed，A-017）：移除模組載入時的 `prefsRepository.load()` 與模組層 `rhythmTicket`。

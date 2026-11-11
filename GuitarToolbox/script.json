@@ -1,7 +1,7 @@
 {
   "name": "吉他工具箱",
   "description": "和弦速查、音階與把位練習、節奏練習的吉他工具",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "icon": "guitars",
   "color": "#B45309"
 }

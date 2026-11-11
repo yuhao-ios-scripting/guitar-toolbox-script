@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.2.3"
+const APP_VERSION = "0.2.4"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -201,37 +201,6 @@ const DEFAULT_PREFS: DiagramPrefs = {
   soundOn: true, autoPlay: true, playStyle: "strum", haptics: true,
   barreShapes: DEFAULT_BARRE_SHAPES,
 }
-const PREFS_KEY = "fretboard.prefs.v2"
-
-const prefsRepository = {
-  load(): DiagramPrefs {
-    try {
-      const saved = Storage.get(PREFS_KEY) as (Partial<DiagramPrefs> & {
-        showFingers?: boolean; showNoteNames?: boolean
-      }) | null
-      const merged: DiagramPrefs = { ...DEFAULT_PREFS, ...(saved ?? {}) }
-      // 舊版設定轉換：沒有 boardLabel 時，依舊的兩個開關推算
-      if (saved && saved.boardLabel === undefined) {
-        if (saved.showFingers === false && saved.showNoteNames === false) merged.boardLabel = "none"
-        else if (saved.showFingers === false && saved.showNoteNames !== false) merged.boardLabel = "name"
-        else merged.boardLabel = "finger"
-      }
-      // 舊版設定轉換：沒有 showSideNames 時，沿用舊的「顯示音名」
-      if (saved && saved.showSideNames === undefined) {
-        merged.showSideNames = saved.showNoteNames !== false
-      }
-      // 舊版沒有 barreShapes；格式不符時回到預設
-      merged.barreShapes = Array.isArray(merged.barreShapes)
-        ? BARRE_SHAPE_NAMES.filter((n) => merged.barreShapes.includes(n))
-        : DEFAULT_BARRE_SHAPES
-      return merged
-    } catch { return DEFAULT_PREFS }
-  },
-  save(p: DiagramPrefs): void {
-    try { Storage.set(PREFS_KEY, p) } catch { /* 儲存失敗不影響使用 */ }
-  },
-}
-const initialPrefs = prefsRepository.load()
 
 const resolveFlats = (acc: Accidental, auto: boolean): boolean =>
   acc === "auto" ? auto : acc === "flat"
@@ -1309,37 +1278,49 @@ const DEFAULT_HUB: HubSettings = {
   source: "scale", shuffle: true,
   degrees: [...ALL_DEGREES], qualities: ["maj", "min"],
 }
-const HUB_KEY = "chord-hub.settings.v2"
-const LEGACY_TRAINER_KEY = "chord-trainer.settings.v1" // 舊版「和弦練習」的設定，第一次啟動時沿用
 
-const hubRepository = {
-  load(): HubSettings {
-    try {
-      const saved = Storage.get(HUB_KEY) as Partial<HubSettings> | null
-      const legacy = saved ? null : (Storage.get(LEGACY_TRAINER_KEY) as Partial<HubSettings> | null)
-      const m = { ...DEFAULT_HUB, ...(saved ?? legacy ?? {}) } as HubSettings
-      const sections: HubSection[] = ["finder", "progression", "practice"]
-      return {
-        ...m,
-        section: sections.includes(m.section) ? m.section : "finder",
-        tonic: mod12(typeof m.tonic === "number" ? m.tonic : 0),
-        mode: m.mode === "minor" ? "minor" : "major",
-        scope: m.scope === "open" || m.scope === "barre" || m.scope === "both" ? m.scope : "open",
-        finderRoot: mod12(typeof m.finderRoot === "number" ? m.finderRoot : 0),
-        finderQuality: isQualityKey(m.finderQuality) ? m.finderQuality : "maj",
-        finderBass: typeof m.finderBass === "number" && m.finderBass >= 0 && m.finderBass <= 11
-          ? Math.floor(m.finderBass) : -1,
-        source: m.source === "progression" ? "progression" : "scale",
-        degrees: Array.isArray(m.degrees) ? m.degrees.filter((d) => d >= 0 && d <= 6) : [...ALL_DEGREES],
-        qualities: Array.isArray(m.qualities) ? m.qualities.filter(isQualityKey) : ["maj", "min"],
-      }
-    } catch { return DEFAULT_HUB }
-  },
-  save(s: HubSettings): void {
-    try { Storage.set(HUB_KEY, s) } catch { /* 儲存失敗不影響使用 */ }
-  },
+/* ① Application：和弦分頁的純函式（由元件呼叫，方便單獨測試） */
+// 指定低音與根音相同、或未指定時，視為一般和弦（-1）
+const effectiveBass = (root: PitchClass, bass: number): number =>
+  bass >= 0 && bass !== root ? bass : -1
+
+const keyTitleOf = (key: Key, flats: boolean): string =>
+  `${noteName(flats)(key.tonic)} ${key.mode === "major" ? "大調" : "自然小調"}`
+
+interface FinderView {
+  readonly root: PitchClass
+  readonly quality: FinderQuality
+  readonly bass: number
+  readonly flats: boolean
+  readonly title: string
 }
-const initialHub = hubRepository.load()
+// 速查的和弦標題與升降記號：小調性質的和弦偏好降記號慣例
+const finderViewOf = (s: HubSettings, accidental: Accidental): FinderView => {
+  const quality = qualityDef(s.finderQuality)
+  const bass = effectiveBass(s.finderRoot, s.finderBass)
+  const flats = resolveFlats(
+    accidental,
+    prefersFlats({ tonic: s.finderRoot, mode: MINORISH_QUALITIES.has(quality.key) ? "minor" : "major" }),
+  )
+  const nm = noteName(flats)
+  const title = nm(s.finderRoot) + quality.suffix + (bass >= 0 ? `/${nm(bass)}` : "")
+  return { root: s.finderRoot, quality, bass, flats, title }
+}
+
+// 在 length 個項目中前進或後退一格（環狀）
+const stepIndex = (index: number, length: number, dir: 1 | -1): number =>
+  length === 0 ? 0 : ((index % length) + dir + length) % length
+
+const progressionSeconds = (chordCount: number, beats: number, bpm: number): number =>
+  Math.round((chordCount * beats * 60) / bpm)
+
+// 練習題庫：來源是目前的和弦進行，或調內所選級數 × 類型
+const practiceDeckOf = (
+  s: HubSettings, progChords: readonly ProgChord[], shapes: readonly string[],
+): Deck =>
+  s.source === "progression"
+    ? deckFromChords(practiceChordsOfProgression(progChords), s.scope, shapes)
+    : buildDeck({ tonic: s.tonic, mode: s.mode }, s.scope, shapes, s.degrees, s.qualities)
 
 /* ① 共用：和弦詳情列（速查與進行共用）
  * 傳回一組可直接放進 Section 的列：說明列＋各按法。
@@ -1358,7 +1339,7 @@ function chordDetailRows(p: {
   bass?: number
 }): JSX.Element[] {
   const { root, quality, flats, prefs, scope, only, width } = p
-  const bass = p.bass !== undefined && p.bass >= 0 && p.bass !== root ? p.bass : -1
+  const bass = effectiveBass(root, p.bass ?? -1)
   const q = qualityDef(quality)
   const nm = noteName(flats)
   const notes = q.intervals.map((i) => nm(root + i)).join("  ")
@@ -1434,8 +1415,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   /* ── 共用：調性與升降記號 ── */
   const key: Key = { tonic: s.tonic, mode: s.mode }
   const keyFlats = resolveFlats(prefs.accidental, prefersFlats(key))
-  const keyNm = noteName(keyFlats)
-  const keyTitle = `${keyNm(s.tonic)} ${s.mode === "major" ? "大調" : "自然小調"}`
+  const keyTitle = keyTitleOf(key, keyFlats)
   const prefer: Prefer = s.scope === "barre" ? "barre" : "open"
 
   /* ── 進行 ── */
@@ -1450,19 +1430,11 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   const selIdx = Math.min(selected, progChords.length - 1)
   const sel = progChords[selIdx]
   const progSummary = progChords.map((c) => c.name).join("  ›  ")
-  const seconds = Math.round((progChords.length * s.beats * 60) / s.bpm)
+  const seconds = progressionSeconds(progChords.length, s.beats, s.bpm)
 
   /* ── 速查 ── */
-  const finderRoot = s.finderRoot
-  const finderQ = qualityDef(s.finderQuality)
-  const finderBass = s.finderBass >= 0 && s.finderBass !== finderRoot ? s.finderBass : -1
-  const finderFlats = resolveFlats(
-    prefs.accidental,
-    prefersFlats({ tonic: finderRoot, mode: MINORISH_QUALITIES.has(finderQ.key) ? "minor" : "major" }),
-  )
-  const finderNm = noteName(finderFlats)
-  const finderTitle = finderNm(finderRoot) + finderQ.suffix
-    + (finderBass >= 0 ? `/${finderNm(finderBass)}` : "")
+  const finder = finderViewOf(s, prefs.accidental)
+  const { root: finderRoot, bass: finderBass, flats: finderFlats, title: finderTitle } = finder
 
   /* ── 練習 ── */
   const chords = useMemo(() => diatonicChords({ tonic: s.tonic, mode: s.mode }), [s.tonic, s.mode])
@@ -1473,9 +1445,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   const degreesKey = s.degrees.join(",")
   const qualitiesKey = s.qualities.join(",")
   const deck = useMemo(
-    () => s.source === "progression"
-      ? deckFromChords(practiceChordsOfProgression(progChords), s.scope, prefs.barreShapes)
-      : buildDeck({ tonic: s.tonic, mode: s.mode }, s.scope, prefs.barreShapes, s.degrees, s.qualities),
+    () => practiceDeckOf(s, progChords, prefs.barreShapes),
     [s.source, progChords, s.tonic, s.mode, s.scope, shapesKey, degreesKey, qualitiesKey],
   )
   const ordered = useMemo(
@@ -1511,8 +1481,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
   }
   const step = (dir: 1 | -1) => {
     if (ordered.length === 0) return
-    const base = session.index % ordered.length
-    const i = (base + dir + ordered.length) % ordered.length
+    const i = stepIndex(session.index, ordered.length, dir)
     dispatch({ type: "go", index: i })
     haptic(prefs, "light")
     if (prefs.soundOn && prefs.autoPlay) playChord(ordered[i].frets, prefs.playStyle)
@@ -1538,7 +1507,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
         <Picker title="根音" value={s.finderRoot} pickerStyle="menu"
           onChanged={(v: number) => {
             patch({ finderRoot: mod12(v) })
-            auditionFinder(mod12(v), s.finderQuality, s.finderBass >= 0 && s.finderBass !== v ? s.finderBass : -1)
+            auditionFinder(mod12(v), s.finderQuality, effectiveBass(mod12(v), s.finderBass))
           }}>
           {NOTE_LABELS.map((r, i) => <Text key={r} tag={i}>{r}</Text>)}
         </Picker>
@@ -1553,7 +1522,7 @@ function ChordHub({ prefs, layout }: { prefs: DiagramPrefs; layout: Layout }) {
         <Picker title="指定低音" value={s.finderBass} pickerStyle="menu"
           onChanged={(v: number) => {
             patch({ finderBass: v })
-            auditionFinder(finderRoot, s.finderQuality, v >= 0 && v !== finderRoot ? v : -1)
+            auditionFinder(finderRoot, s.finderQuality, effectiveBass(finderRoot, v))
           }}>
           <Text tag={-1}>無（原位）</Text>
           {NOTE_LABELS.map((r, i) => <Text key={`b${r}`} tag={i}>{r}</Text>)}
@@ -1942,32 +1911,11 @@ const drillReduce = (s: DrillSession, a: DrillAction): DrillSession => {
   }
 }
 
-/* ② Infrastructure：記住最佳連對（主音、音階類型與把位由音階分頁共用，不另外儲存） */
+/* ② 認音練習的儲存格式：只記住最佳連對（主音、音階類型與把位由音階分頁共用；讀寫在「本機儲存」區塊） */
 interface DrillSaved { best: number }
-const DRILL_KEY = "fretboard.drill.v4"
-const LEGACY_DRILL_KEYS: readonly string[] = ["fretboard.drill.v3", "fretboard.drill.v2", "fretboard.drill.v1"] // 只沿用最佳連對
 const DEFAULT_DRILL: DrillSaved = { best: 0 }
 // 本頁的畫面預設：找音、認音都不顯示音名與和弦音圓點，讓使用者先靠自己判斷
 const DEFAULT_DRILL_UI = { showNames: false, showTonesFind: false, showTonesName: false } as const
-const drillRepository = {
-  load(): DrillSaved {
-    try {
-      const s = Storage.get(DRILL_KEY) as Partial<DrillSaved> | null
-      if (s) {
-        return { best: typeof s.best === "number" ? s.best : 0 }
-      }
-      for (const k of LEGACY_DRILL_KEYS) {
-        const old = Storage.get(k) as { best?: number } | null
-        if (old && typeof old.best === "number") return { best: old.best }
-      }
-      return DEFAULT_DRILL
-    } catch { return DEFAULT_DRILL }
-  },
-  save(d: DrillSaved): void {
-    try { Storage.set(DRILL_KEY, d) } catch { /* 忽略 */ }
-  },
-}
-const initialDrill = drillRepository.load()
 
 /* ② UI：把題目狀態換算成指板上的標記 */
 const drillMarks = (
@@ -2699,40 +2647,10 @@ const DEFAULT_RHYTHM: RhythmSettings = {
   bpm: 80, tonic: mod12(0), mode: "major", progKey: MAJOR_PROGS[0].key,
   prefer: "open", bars: 1, repeats: 2,
 }
-const RHYTHM_KEY = "rhythm.settings.v1"
 
 const validStrum = (p: unknown, beats: number): p is string =>
   typeof p === "string" && p.length === beats * 2 && p.split("").every(isStroke)
 
-const rhythmRepository = {
-  load(): RhythmSettings {
-    try {
-      const saved = Storage.get(RHYTHM_KEY) as Partial<RhythmSettings> | null
-      const m = { ...DEFAULT_RHYTHM, ...(saved ?? {}) } as RhythmSettings
-      const beats = m.beats === 3 ? 3 : 4
-      const mode: KeyMode = m.mode === "minor" ? "minor" : "major"
-      return {
-        kind: m.kind === "pick" ? "pick" : "strum",
-        beats,
-        strumPattern: validStrum(m.strumPattern, beats) ? m.strumPattern : firstStrum(beats).pattern,
-        pickKey: PICK_TEMPLATES.some((t) => t.key === m.pickKey && t.beats === beats)
-          ? m.pickKey : firstPick(beats).key,
-        notation: isFingerNotation(m.notation) ? m.notation : "pima",
-        bpm: typeof m.bpm === "number" ? clampBpm(m.bpm) : DEFAULT_RHYTHM.bpm,
-        tonic: mod12(typeof m.tonic === "number" ? m.tonic : 0),
-        mode,
-        progKey: progsOf(mode).some((p) => p.key === m.progKey) ? m.progKey : progsOf(mode)[0].key,
-        prefer: m.prefer === "barre" ? "barre" : "open",
-        bars: m.bars === 2 ? 2 : 1,
-        repeats: REPEAT_OPTIONS.includes(m.repeats) ? m.repeats : DEFAULT_RHYTHM.repeats,
-      }
-    } catch { return DEFAULT_RHYTHM }
-  },
-  save(s: RhythmSettings): void {
-    try { Storage.set(RHYTHM_KEY, s) } catch { /* 儲存失敗不影響使用 */ }
-  },
-}
-const initialRhythm = rhythmRepository.load()
 
 /* ④ UI：節奏圖元件
  * 每格寬度依可用寬度推算（純函式），8 格在手機約 36–40pt，在 iPad 可放大到 64pt。 */
@@ -2844,6 +2762,31 @@ function PickGrid(props: {
 /* ④ UI：節奏分頁 */
 interface Run { readonly startedAt: number; readonly plan: PlayPlan; readonly single: number | null }
 
+// 播放游標的時鐘：約每 60 毫秒回報一次時間，播完自動呼叫 onDone
+// Scripting 沒有 setInterval，改用遞迴 setTimeout
+function usePlaybackClock(run: Run | null, onTick: (t: number) => void, onDone: () => void): void {
+  useEffect(() => {
+    if (!run) return undefined
+    let alive = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = () => {
+      if (!alive) return
+      const t = Date.now()
+      onTick(t)
+      if ((t - run.startedAt) / 1000 > runSeconds(run.plan) + 0.3) {
+        onDone()
+        return
+      }
+      timer = setTimeout(tick, 60)
+    }
+    timer = setTimeout(tick, 60)
+    return () => {
+      alive = false
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [run])
+}
+
 // 播放請求的序號：停止或重新播放時作廢尚在渲染中的舊請求
 let rhythmTicket = 0
 
@@ -2866,34 +2809,13 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
     setRun(null)
   }, [s.kind, s.beats, s.strumPattern, s.pickKey, s.bpm, s.tonic, s.mode, s.progKey, s.prefer, s.bars, s.repeats])
 
-  // 播放游標：約每 60 毫秒更新一次，播完自動停下
-  // Scripting 沒有 setInterval，改用遞迴 setTimeout
-  useEffect(() => {
-    if (!run) return undefined
-    let alive = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const tick = () => {
-      if (!alive) return
-      const t = Date.now()
-      setNow(t)
-      if ((t - run.startedAt) / 1000 > runSeconds(run.plan) + 0.3) {
-        setRun(null)
-        return
-      }
-      timer = setTimeout(tick, 60)
-    }
-    timer = setTimeout(tick, 60)
-    return () => {
-      alive = false
-      if (timer !== undefined) clearTimeout(timer)
-    }
-  }, [run])
+  usePlaybackClock(run, setNow, () => setRun(null))
 
   /* ── 調性與和弦進行 ── */
   const keySig: Key = { tonic: s.tonic, mode: s.mode }
   const flats = resolveFlats(prefs.accidental, prefersFlats(keySig))
   const nm = noteName(flats)
-  const keyTitle = `${nm(s.tonic)} ${s.mode === "major" ? "大調" : "自然小調"}`
+  const keyTitle = keyTitleOf(keySig, flats)
   const progs = progsOf(s.mode)
   const progIdx = Math.max(0, progs.findIndex((p) => p.key === s.progKey))
   const prog = progs[progIdx]
@@ -3137,6 +3059,134 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
 }
 
 /* ════════════════════════════════════════════════
+ * Infrastructure：本機儲存（偏好、和弦、練習、節奏）
+ * 所有 Storage 讀寫集中在這裡：讀取時驗證並補預設值、保留舊 key 的遷移；
+ * 儲存失敗一律不影響使用。各設定的型別與預設值留在對應的領域區塊。
+ * ════════════════════════════════════════════════ */
+
+// 偏好
+const PREFS_KEY = "fretboard.prefs.v2"
+
+const prefsRepository = {
+  load(): DiagramPrefs {
+    try {
+      const saved = Storage.get(PREFS_KEY) as (Partial<DiagramPrefs> & {
+        showFingers?: boolean; showNoteNames?: boolean
+      }) | null
+      const merged: DiagramPrefs = { ...DEFAULT_PREFS, ...(saved ?? {}) }
+      // 舊版設定轉換：沒有 boardLabel 時，依舊的兩個開關推算
+      if (saved && saved.boardLabel === undefined) {
+        if (saved.showFingers === false && saved.showNoteNames === false) merged.boardLabel = "none"
+        else if (saved.showFingers === false && saved.showNoteNames !== false) merged.boardLabel = "name"
+        else merged.boardLabel = "finger"
+      }
+      // 舊版設定轉換：沒有 showSideNames 時，沿用舊的「顯示音名」
+      if (saved && saved.showSideNames === undefined) {
+        merged.showSideNames = saved.showNoteNames !== false
+      }
+      // 舊版沒有 barreShapes；格式不符時回到預設
+      merged.barreShapes = Array.isArray(merged.barreShapes)
+        ? BARRE_SHAPE_NAMES.filter((n) => merged.barreShapes.includes(n))
+        : DEFAULT_BARRE_SHAPES
+      return merged
+    } catch { return DEFAULT_PREFS }
+  },
+  save(p: DiagramPrefs): void {
+    try { Storage.set(PREFS_KEY, p) } catch { /* 儲存失敗不影響使用 */ }
+  },
+}
+const initialPrefs = prefsRepository.load()
+
+// 和弦分頁（含舊版「和弦練習」設定的遷移）
+const HUB_KEY = "chord-hub.settings.v2"
+const LEGACY_TRAINER_KEY = "chord-trainer.settings.v1" // 舊版「和弦練習」的設定，第一次啟動時沿用
+
+const hubRepository = {
+  load(): HubSettings {
+    try {
+      const saved = Storage.get(HUB_KEY) as Partial<HubSettings> | null
+      const legacy = saved ? null : (Storage.get(LEGACY_TRAINER_KEY) as Partial<HubSettings> | null)
+      const m = { ...DEFAULT_HUB, ...(saved ?? legacy ?? {}) } as HubSettings
+      const sections: HubSection[] = ["finder", "progression", "practice"]
+      return {
+        ...m,
+        section: sections.includes(m.section) ? m.section : "finder",
+        tonic: mod12(typeof m.tonic === "number" ? m.tonic : 0),
+        mode: m.mode === "minor" ? "minor" : "major",
+        scope: m.scope === "open" || m.scope === "barre" || m.scope === "both" ? m.scope : "open",
+        finderRoot: mod12(typeof m.finderRoot === "number" ? m.finderRoot : 0),
+        finderQuality: isQualityKey(m.finderQuality) ? m.finderQuality : "maj",
+        finderBass: typeof m.finderBass === "number" && m.finderBass >= 0 && m.finderBass <= 11
+          ? Math.floor(m.finderBass) : -1,
+        source: m.source === "progression" ? "progression" : "scale",
+        degrees: Array.isArray(m.degrees) ? m.degrees.filter((d) => d >= 0 && d <= 6) : [...ALL_DEGREES],
+        qualities: Array.isArray(m.qualities) ? m.qualities.filter(isQualityKey) : ["maj", "min"],
+      }
+    } catch { return DEFAULT_HUB }
+  },
+  save(s: HubSettings): void {
+    try { Storage.set(HUB_KEY, s) } catch { /* 儲存失敗不影響使用 */ }
+  },
+}
+const initialHub = hubRepository.load()
+
+// 音階分頁：認音練習的最佳連對
+const DRILL_KEY = "fretboard.drill.v4"
+const LEGACY_DRILL_KEYS: readonly string[] = ["fretboard.drill.v3", "fretboard.drill.v2", "fretboard.drill.v1"] // 只沿用最佳連對
+const drillRepository = {
+  load(): DrillSaved {
+    try {
+      const s = Storage.get(DRILL_KEY) as Partial<DrillSaved> | null
+      if (s) {
+        return { best: typeof s.best === "number" ? s.best : 0 }
+      }
+      for (const k of LEGACY_DRILL_KEYS) {
+        const old = Storage.get(k) as { best?: number } | null
+        if (old && typeof old.best === "number") return { best: old.best }
+      }
+      return DEFAULT_DRILL
+    } catch { return DEFAULT_DRILL }
+  },
+  save(d: DrillSaved): void {
+    try { Storage.set(DRILL_KEY, d) } catch { /* 忽略 */ }
+  },
+}
+const initialDrill = drillRepository.load()
+
+// 節奏分頁
+const RHYTHM_KEY = "rhythm.settings.v1"
+const rhythmRepository = {
+  load(): RhythmSettings {
+    try {
+      const saved = Storage.get(RHYTHM_KEY) as Partial<RhythmSettings> | null
+      const m = { ...DEFAULT_RHYTHM, ...(saved ?? {}) } as RhythmSettings
+      const beats = m.beats === 3 ? 3 : 4
+      const mode: KeyMode = m.mode === "minor" ? "minor" : "major"
+      return {
+        kind: m.kind === "pick" ? "pick" : "strum",
+        beats,
+        strumPattern: validStrum(m.strumPattern, beats) ? m.strumPattern : firstStrum(beats).pattern,
+        pickKey: PICK_TEMPLATES.some((t) => t.key === m.pickKey && t.beats === beats)
+          ? m.pickKey : firstPick(beats).key,
+        notation: isFingerNotation(m.notation) ? m.notation : "pima",
+        bpm: typeof m.bpm === "number" ? clampBpm(m.bpm) : DEFAULT_RHYTHM.bpm,
+        tonic: mod12(typeof m.tonic === "number" ? m.tonic : 0),
+        mode,
+        progKey: progsOf(mode).some((p) => p.key === m.progKey) ? m.progKey : progsOf(mode)[0].key,
+        prefer: m.prefer === "barre" ? "barre" : "open",
+        bars: m.bars === 2 ? 2 : 1,
+        repeats: REPEAT_OPTIONS.includes(m.repeats) ? m.repeats : DEFAULT_RHYTHM.repeats,
+      }
+    } catch { return DEFAULT_RHYTHM }
+  },
+  save(s: RhythmSettings): void {
+    try { Storage.set(RHYTHM_KEY, s) } catch { /* 儲存失敗不影響使用 */ }
+  },
+}
+const initialRhythm = rhythmRepository.load()
+
+
+/* ════════════════════════════════════════════════
  * 設定
  * ════════════════════════════════════════════════ */
 const PREVIEW_SPEC: DiagramSpec = {
@@ -3354,4 +3404,5 @@ export {
   OPEN_STRINGS, FINDER_QUALITIES, qualityDef, MOVABLE_SHAPES, OPEN,
   getVoicings, getSlashVoicings, voicingsInScope, voicingTitle, qualityLabel, QUALITY_TEXT, resolveFingering,
   diatonicChords, resolveProgression, MAJOR_PROGS,
+  effectiveBass, keyTitleOf, finderViewOf, stepIndex, progressionSeconds, practiceDeckOf, DEFAULT_HUB,
 }

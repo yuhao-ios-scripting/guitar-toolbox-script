@@ -421,3 +421,27 @@
 
 # → 提問 / A-020
 
++ godev 採用建議，先做 B-003
+
+# → 回覆 / A-020
+
+* _2026-11-12 +0800_
+
+1. `godev 採用建議，先做 B-003`
+
+   完成一部分（0.2.4，行為不變）：
+   - 四個儲存庫（偏好、和弦、認音練習、節奏）及其 key 集中到單一區塊「Infrastructure：本機儲存」；各設定的型別與預設值留在領域區塊，儲存格式與舊 key 遷移不變。
+   - 從 `ChordHub`、`RhythmStudio` 抽出純函式並納入測試：`effectiveBass`、`keyTitleOf`、`finderViewOf`、`stepIndex`、`progressionSeconds`、`practiceDeckOf`；節奏頁的播放游標計時抽成 `usePlaybackClock`。
+   - `npm run typecheck` 零錯誤，`npm test` 493 個案例通過；尚未實機檢視，尚未推送。
+
+   未完成：`ChordHub`（364 行）與 `RhythmStudio`（267 行）的 JSX 區塊（速查、進行、練習；左右欄區塊）仍在同一個元件內。這些區塊共用大量區域變數，沒有 UI 測試保護下拆成元件，風險高於收益，且屬畫面層；建議在你實機驗證本次變更後，再決定是否拆分。reducer（`practiceReducer`、認音練習）本來就是純函式，已在各自功能區塊內，未移動。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-020-1：是否現在把 `ChordHub` 與 `RhythmStudio` 的 JSX 區塊拆成獨立元件？建議預設：先不拆，等實機驗證 0.2.x 後再做。
+  - ans:
+
+---
+
+# → 提問 / A-021
+
