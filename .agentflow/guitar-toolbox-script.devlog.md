@@ -8,9 +8,9 @@
 
 分支：main
 
-目前工作：A-031 等待下一個請求。
+目前工作：A-032 等待下一個請求。
 
-已驗證：A-030 型別檢查零錯誤、569 個測試通過（0.10.0，已提交、尚未推送；五度圈繪製待實機確認）。
+已驗證：v0.10.0 已推送並建立 release（ZIP 下載內容與本機一致；尚未在實機匯入驗證，五度圈繪製待實機確認）。
 
 下一步：等待請求。
 
@@ -717,4 +717,22 @@
 ---
 
 # → 提問 / A-031
+
++ godev 打包zip並發佈
+
+# → 回覆 / A-031
+
+* _2026-11-12 02:15:08 +0800_
+
+1. `godev 打包zip並發佈`
+
+   完成：已推送 `09b0d70`，在 `GuitarToolbox/` 內打包 `script.json` 與 `index.tsx`，建立 release [v0.10.0](https://github.com/yuhao-ios-scripting/guitar-toolbox-script/releases/tag/v0.10.0)（資產 `GuitarToolbox.zip`）。下載 `releases/latest/download/GuitarToolbox.zip` 與本機 ZIP 位元組一致。本機暫存 ZIP 已刪除。請在實機匯入確認可啟動與五度圈繪製。
+
+## 問題（批次提出，各附建議預設值）
+
+- None.
+
+---
+
+# → 提問 / A-032
 
