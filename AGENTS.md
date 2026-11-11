@@ -198,6 +198,8 @@ scripts/src/
 
 遵循 Apple Human Interface Guidelines 於 iOS / iPadOS 27 的最新版本，並沿用 Liquid Glass 設計語言。**以系統元件為先，不自繪仿製。**
 
+> **設計系統**：本章指引落實成的代幣、對比表、無障礙規則與檢查清單見 [docs/design-system.md](docs/design-system.md)；新增或修改畫面前先讀它，並保持兩者一致。
+
 - **系統元件優先**：使用 Scripting 提供的 SwiftUI 對應元件（`NavigationStack`、`List`、`Form`、`TabView`、`Picker`、`Toggle`、`Button`、`Sheet` 等），不手刻導覽列、分頁列或彈出視窗。
 - **語意色彩與材質**：使用系統語意色（如 `label`、`secondaryLabel`、`systemBackground`、`tint`），自動支援淺色／深色模式。不寫死十六進位色碼，除非是指板、和弦圖等必須精準呈現的領域圖形，且仍須通過對比檢查。
 - **動態字級（Dynamic Type）**：文字使用語意字級（`title`、`headline`、`body`、`caption`），版面在最大字級下不得截斷或重疊。

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, computeLayout, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -304,5 +304,49 @@ describe("設定的解析", () => {
     expect(prefsRepository.load().haptics).toBe(false)
     hubRepository.save({ ...DEFAULT_HUB, bpm: 120 })
     expect(hubRepository.load().bpm).toBe(120)
+  })
+})
+
+describe("設計系統：色彩對比（WCAG AA）", () => {
+  const AA = 4.5
+  const fills = (f: string) => (f.startsWith("#") ? [hexToRgb(f)] : [SYSTEM_FILLS[f].light, SYSTEM_FILLS[f].dark])
+  Object.entries(PALETTES).forEach(([name, pal]) => {
+    ;(["dot", "root", "good", "bad", "question"] as const).forEach((tone) => {
+      it(`${name} 配色「${tone}」底色上的 inkOn 字色在淺色與深色模式都 ≥ 4.5:1`, () => {
+        const ink = hexToRgb(inkOn(pal[tone]))
+        fills(pal[tone]).forEach((rgb) => expect(contrastRatio(rgb, ink)).toBeGreaterThanOrEqual(AA))
+      })
+    })
+  })
+  it("contrastRatio：黑白為 21:1，相同顏色為 1:1", () => {
+    expect(contrastRatio([0, 0, 0], [255, 255, 255])).toBeCloseTo(21, 5)
+    expect(contrastRatio([10, 20, 30], [10, 20, 30])).toBeCloseTo(1, 5)
+  })
+  it("藍、紅、紫底用黑字（白字對比不足 4.5:1）", () => {
+    expect(inkOn("systemBlue")).toBe("#000000")
+    expect(inkOn("systemRed")).toBe("#000000")
+    expect(inkOn("systemPurple")).toBe("#000000")
+    expect(inkOn("#48484a")).toBe("#ffffff")
+  })
+})
+
+describe("設計系統：無障礙文字與觸控目標", () => {
+  const nm = noteName(false)
+  it("describePosition：第 3 格、第五弦為 C", () => {
+    expect(describePosition(1, 3, nm)).toBe("第 3 格，第五弦，音名 C")
+    expect(describePosition(0, 0, nm)).toBe("空弦，第六弦，音名 E")
+  })
+  it("describeVoicing：C 大三和弦逐弦說明並含悶音", () => {
+    const text = describeVoicing([null, 3, 2, 0, 1, 0], nm)
+    expect(text.split("；")).toHaveLength(6)
+    expect(text).toContain("第六弦悶音")
+    expect(text).toContain("第 3 格，第五弦，音名 C")
+  })
+  it("刷法名稱涵蓋四種筆劃", () => {
+    expect(Object.keys(STROKE_NAME_ZH).sort()).toEqual(["-", "D", "U", "X"])
+  })
+  it("觸控目標最小 44pt，指板格高在各寬度都不低於它", () => {
+    expect(TOUCH_MIN).toBe(44)
+    ;[undefined, 240, 390, 560, 800].forEach((w) => expect(cellHeightFor(w)).toBeGreaterThanOrEqual(TOUCH_MIN))
   })
 })

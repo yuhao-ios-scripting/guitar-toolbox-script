@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.2.6"
+const APP_VERSION = "0.3.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -189,6 +189,49 @@ const PALETTES = {
 type PaletteKey = keyof typeof PALETTES
 type Palette = (typeof PALETTES)[PaletteKey]
 const PALETTE_KEYS: readonly PaletteKey[] = ["classic", "forest", "mono"]
+
+/* ── 設計系統：版面與無障礙基準（細節見 docs/design-system.md） ── */
+const TOUCH_MIN = 44 // 可點擊目標的最小邊長（pt），HIG 規範
+// 指板、節奏圖等固定尺寸圖形內的文字，字級放大到這個上限就不再放大，避免被固定格高裁切；
+// 一般文字（清單、按鈕、說明）仍完整跟隨動態字級
+const BOARD_TYPE_SIZE = { to: "xxxLarge" } as const
+
+/* ── 色彩對比（WCAG 2.x）：圓點內文字的顏色由底色決定，確保達 AA 4.5:1 ── */
+type Rgb = readonly [number, number, number]
+const INK_DARK = "#000000"
+const INK_LIGHT = "#ffffff"
+// 系統顏色在淺色／深色模式下的 RGB（iOS 系統色）；自訂色（十六進位）不隨模式改變
+const SYSTEM_FILLS: Record<string, { readonly light: Rgb; readonly dark: Rgb }> = {
+  systemBlue: { light: [0, 122, 255], dark: [10, 132, 255] },
+  systemOrange: { light: [255, 149, 0], dark: [255, 159, 10] },
+  systemGreen: { light: [52, 199, 89], dark: [48, 209, 88] },
+  systemRed: { light: [255, 59, 48], dark: [255, 69, 58] },
+  systemPurple: { light: [175, 82, 222], dark: [191, 90, 242] },
+}
+const hexToRgb = (hex: string): Rgb => [
+  parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16),
+]
+const relativeLuminance = ([r, g, b]: Rgb): number => {
+  const lin = (c: number) => {
+    const v = c / 255
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+const contrastRatio = (a: Rgb, b: Rgb): number => {
+  const [la, lb] = [relativeLuminance(a), relativeLuminance(b)]
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+// 一個底色在各模式下的實際 RGB；未知的顏色名稱回傳空陣列
+const fillRgbs = (fill: string): readonly Rgb[] =>
+  fill.startsWith("#") ? [hexToRgb(fill)]
+    : SYSTEM_FILLS[fill] ? [SYSTEM_FILLS[fill].light, SYSTEM_FILLS[fill].dark] : []
+const worstContrast = (fill: string, ink: string): number =>
+  Math.min(...fillRgbs(fill).map((c) => contrastRatio(c, hexToRgb(ink))))
+// 選出在所有模式下對比最高的字色（黑或白）
+const inkOn = (fill: string): string =>
+  fillRgbs(fill).length === 0 ? INK_LIGHT
+    : worstContrast(fill, INK_DARK) >= worstContrast(fill, INK_LIGHT) ? INK_DARK : INK_LIGHT
 
 // 可選的封閉和弦指型（與 MOVABLE_SHAPES 同序）；C、G 型伸張大，預設不啟用
 const BARRE_SHAPE_NAMES: readonly string[] = ["E", "A", "D", "C", "G"]
@@ -700,7 +743,7 @@ const DEFAULT_CELL: CellDim = { w: 44, h: 44, dot: 28 }
 
 // 格子高度：觸控範圍不小於 44pt（符合 HIG）；只有 iPad 的指板寬度會 ≥ 560
 const cellHeightFor = (width?: number): number =>
-  width !== undefined && width >= 560 ? 48 : 44
+  width !== undefined && width >= 560 ? TOUCH_MIN + 4 : TOUCH_MIN
 
 const fitCell = (
   o: Orientation, width: number | undefined, rows: number, horizontalExtras: number,
@@ -765,9 +808,10 @@ function BoardCell(props: {
   mark?: Mark
   bar: BarFlags | null
   pal: Palette
+  tapLabel?: string
   onTap?: () => void
 }) {
-  const { o, cell, c, mark, bar, pal, onTap } = props
+  const { o, cell, c, mark, bar, pal, tapLabel, onTap } = props
   const { w, h, dot } = cell
   const v = o === "vertical"
   const thick = STRING_THICKNESS[(STRING_COUNT - c) as StringNo]
@@ -780,11 +824,8 @@ function BoardCell(props: {
         : tone === "bad" ? pal.bad
           : tone === "question" ? pal.question
             : pal.dot
-  // 橘色與綠色底上，白字對比不足，改用深色字
-  const textColor =
-    tone === "ghost" || tone === "hollow" ? "secondaryLabel"
-      : tone === "root" || tone === "good" ? "#000000"
-        : "#ffffff"
+  // 字色由底色的對比決定（inkOn），不寫死
+  const textColor = tone === "ghost" || tone === "hollow" ? "secondaryLabel" : inkOn(fill)
 
   return (
     <ZStack frame={{ width: w, height: h }}>
@@ -814,6 +855,7 @@ function BoardCell(props: {
       ) : null}
       {onTap ? (
         <Rectangle fill="systemBackground" opacity={0.01}
+          accessibilityLabel={tapLabel} accessibilityAddTraits="isButton"
           frame={{ width: w, height: h }} onTapGesture={onTap} />
       ) : null}
     </ZStack>
@@ -844,11 +886,16 @@ interface FretboardProps {
   readonly names?: readonly NameCell[]
   readonly prefs: DiagramPrefs
   readonly width?: number // 可用寬度：有給就依寬度撐滿，沒給就用預設 44pt
+  readonly label?: string // 無障礙說明：整張圖合成一個元素；有 onTap 時改為逐格說明
   readonly onTap?: (c: number, fret: number) => void
 }
 
 function Fretboard(props: FretboardProps) {
-  const { startFret, rows, marks, bar, nutMarks, names, prefs, width, onTap } = props
+  const { startFret, rows, marks, bar, nutMarks, names, prefs, width, onTap, label } = props
+  const posName = noteName(prefs.accidental === "flat")
+  const a11y = label !== undefined && !onTap
+    ? { accessibilityElement: "ignore", accessibilityLabel: label }
+    : {}
   const pal = PALETTES[prefs.palette]
   const o = prefs.orientation
   const fretNos = range(rows).map((i) => startFret + i)
@@ -872,13 +919,14 @@ function Fretboard(props: FretboardProps) {
     <BoardCell key={f} o={o} cell={cell} c={c} pal={pal}
       mark={markMap.get(`${c}:${f}`)}
       bar={barFlagsOf(bar, c, f, o)}
+      tapLabel={describePosition(c, f, posName)}
       onTap={onTap ? () => onTap(c, f) : undefined} />
   )
 
   if (o === "vertical") {
     const cols = range(STRING_COUNT)
     return (
-      <VStack spacing={0}>
+      <VStack spacing={0} dynamicTypeSize={BOARD_TYPE_SIZE} {...a11y}>
         {prefs.showStringNumbers ? (
           <HStack spacing={0}>
             <Text font="caption2" foregroundStyle="secondaryLabel"
@@ -917,7 +965,7 @@ function Fretboard(props: FretboardProps) {
               frame={{ width: GUTTER, height: 28 }}>{"音"}</Text>
             {names.map((n, c) => (
               <Text key={c} font="caption" fontWeight="bold"
-                foregroundStyle={n.root ? pal.root : "label"}
+                foregroundStyle="label"
                 frame={{ width: w, height: 28 }}>{n.text}</Text>
             ))}
           </HStack>
@@ -931,7 +979,7 @@ function Fretboard(props: FretboardProps) {
   const leftW = (prefs.showStringNumbers ? H_LABEL_W : 0) + (nutMarks ? H_MARK_W : 0) + nutThick
 
   return (
-    <VStack spacing={0}>
+    <VStack spacing={0} dynamicTypeSize={BOARD_TYPE_SIZE} {...a11y}>
       <HStack spacing={0}>
         <Text frame={{ width: leftW, height: 20 }}>{""}</Text>
         {fretNos.map((f) => (
@@ -955,7 +1003,7 @@ function Fretboard(props: FretboardProps) {
           {fretNos.map((f) => cellOf(c, f))}
           {names ? (
             <Text font="caption" fontWeight="bold"
-              foregroundStyle={names[c].root ? pal.root : "label"}
+              foregroundStyle="label"
               frame={{ width: H_NAME_W, height: h }}>{names[c].text}</Text>
           ) : null}
         </HStack>
@@ -963,6 +1011,15 @@ function Fretboard(props: FretboardProps) {
     </VStack>
   )
 }
+
+/* 無障礙文字替代：指板與和弦圖是圖形，VoiceOver 需要用文字說出位置與音名 */
+const STRING_ORDINAL_ZH: readonly string[] = ["六", "五", "四", "三", "二", "一"] // c = 0 → 第六弦
+const describePosition = (c: number, fret: number, nm: (pc: number) => string): string =>
+  `${fret === 0 ? "空弦" : `第 ${fret} 格`}，第${STRING_ORDINAL_ZH[c]}弦，音名 ${nm(OPEN_STRINGS[c] + fret)}`
+const describeVoicing = (frets: readonly Fret[], nm: (pc: number) => string): string =>
+  frets.map((f, c) => (f === null
+    ? `第${STRING_ORDINAL_ZH[c]}弦悶音`
+    : describePosition(c, f, nm))).join("；")
 
 /* 由「指法」換算成指板元件需要的資料 */
 interface BoardModel {
@@ -1035,7 +1092,8 @@ function ChordBoard(props: {
   )
   return (
     <Fretboard startFret={m.startFret} rows={m.rows} marks={m.marks} bar={m.bar}
-      nutMarks={m.nutMarks} names={m.names} prefs={prefs} width={width} />
+      nutMarks={m.nutMarks} names={m.names} prefs={prefs} width={width}
+      label={`和弦指法：${describeVoicing(spec.frets, noteName(prefs.accidental === "flat"))}`} />
   )
 }
 
@@ -2750,6 +2808,7 @@ const slotWidthFor = (available: number, count: number, lead: number): number =>
   clamp(Math.floor((available - lead) / Math.max(1, count)), SLOT_MIN, SLOT_MAX)
 
 const STROKE_GLYPH: Record<Stroke, string> = { D: "↓", U: "↑", X: "×", "-": "·" }
+const STROKE_NAME_ZH: Record<Stroke, string> = { D: "下刷", U: "上刷", X: "悶音切刷", "-": "休止" }
 
 function BeatHeader(props: { count: number; lead: number; slotW: number }) {
   const { count, lead, slotW } = props
@@ -2764,8 +2823,10 @@ function BeatHeader(props: { count: number; lead: number; slotW: number }) {
   )
 }
 
-function StrumCell(props: { stroke: Stroke; active: boolean; pal: Palette; slotW: number; onTap: () => void }) {
-  const { stroke, active, pal, slotW, onTap } = props
+function StrumCell(props: {
+  stroke: Stroke; index: number; active: boolean; pal: Palette; slotW: number; onTap: () => void
+}) {
+  const { stroke, index, active, pal, slotW, onTap } = props
   const rest = stroke === "-"
   return (
     <ZStack frame={{ width: slotW, height: 56 }}>
@@ -2776,6 +2837,8 @@ function StrumCell(props: { stroke: Stroke; active: boolean; pal: Palette; slotW
       <Text font="title2" fontWeight="bold"
         foregroundStyle={rest ? "secondaryLabel" : "label"}>{STROKE_GLYPH[stroke]}</Text>
       <Rectangle fill="systemBackground" opacity={0.01}
+        accessibilityLabel={`第 ${index + 1} 格，${STROKE_NAME_ZH[stroke]}`}
+        accessibilityHint="輕點切換刷法" accessibilityAddTraits="isButton"
         frame={{ width: slotW, height: 56 }} onTapGesture={onTap} />
     </ZStack>
   )
@@ -2788,11 +2851,11 @@ function StrumGrid(props: {
   const pal = PALETTES[prefs.palette]
   const slotW = slotWidthFor(width, strokes.length, 0)
   return (
-    <VStack spacing={4}>
+    <VStack spacing={4} dynamicTypeSize={BOARD_TYPE_SIZE}>
       <BeatHeader count={strokes.length} lead={0} slotW={slotW} />
       <HStack spacing={0}>
         {strokes.map((s, i) => (
-          <StrumCell key={i} stroke={s} active={i === current} pal={pal} slotW={slotW}
+          <StrumCell key={i} stroke={s} index={i} active={i === current} pal={pal} slotW={slotW}
             onTap={() => onTap(i)} />
         ))}
       </HStack>
@@ -2819,7 +2882,9 @@ function PickGrid(props: {
   const rows = range(STRING_COUNT).map((r) => STRING_COUNT - 1 - r) // 1 弦在上
 
   return (
-    <VStack spacing={0}>
+    <VStack spacing={0} dynamicTypeSize={BOARD_TYPE_SIZE}
+      accessibilityElement="ignore"
+      accessibilityLabel={`指彈圖，共 ${slots.length} 格；目前和弦指法：${describeVoicing(frets, noteName(prefs.accidental === "flat"))}`}>
       <BeatHeader count={slots.length} lead={LABEL_W} slotW={slotW} />
       {rows.map((c) => (
         <HStack key={c} spacing={0}>
@@ -2837,7 +2902,7 @@ function PickGrid(props: {
                   <ZStack>
                     <Circle fill={cell.bass ? pal.root : pal.dot} frame={{ width: dot, height: dot }} />
                     <Text font="caption2" fontWeight="bold"
-                      foregroundStyle={cell.bass ? "#000000" : "#ffffff"}>{cell.finger}</Text>
+                      foregroundStyle={inkOn(cell.bass ? pal.root : pal.dot)}>{cell.finger}</Text>
                   </ZStack>
                 ) : null}
               </ZStack>
@@ -3574,5 +3639,7 @@ export {
   finderSections, progressionSections, practiceSections, rhythmTypeSection, rhythmPlaySection,
   rhythmProgSection, rhythmGridSections, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, practiceChordsOfProgression,
   parsePrefs, parseHub, parseDrill, parseRhythm, assertNever, unwrapOr, ok, err, prefsRepository, hubRepository,
+  TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH,
+  cellHeightFor,
   effectiveBass, keyTitleOf, finderViewOf, stepIndex, progressionSeconds, practiceDeckOf, DEFAULT_HUB,
 }

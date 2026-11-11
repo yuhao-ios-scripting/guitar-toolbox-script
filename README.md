@@ -96,7 +96,8 @@ types/           開發用的 Scripting 最小型別外殼（不會被匯入）
 ## 開發｜Development
 
 - 使用 TypeScript（`strict`）與 TSX。安裝相依套件後以 `npm install && npm run typecheck` 進行型別檢查；Scripting 型別以 `types/scripting.d.ts` 的最小外殼代替，畫面元件 props 不受檢查。
-- 單元測試：`npm test`（Vitest），涵蓋音高、和弦組成、按法音高、指法推算與指型篩選。
+- 單元測試：`npm test`（Vitest），涵蓋音高、和弦組成、按法音高、指法推算、指型篩選與設計系統（對比、無障礙文字）。
+- 設計系統：[docs/design-system.md](docs/design-system.md)。
 - Domain 層需有單元測試，涵蓋音程、和弦組成、移調、調音偏差等樂理案例。
 - UI 在實機驗證：iPhone 與 iPad、淺色與深色、最大字級、VoiceOver。
 - 提交前請確認型別檢查與測試通過，且術語與對照表一致。
