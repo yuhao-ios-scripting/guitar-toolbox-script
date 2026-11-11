@@ -190,6 +190,26 @@ scripts/src/
 | staff notation | 五線譜 |
 | chord chart / chord diagram | 和弦譜／和弦圖 |
 
+### 英文 UI 用語（en 在地化）
+
+英文介面文案固定採用下列用語；新增英文字串前先查此表，沒有就先補表。完整的樂理英文名稱見上方各表的 English 欄。
+
+| 繁體中文 | English（UI） | 備註 |
+|---|---|---|
+| 和弦／音階／節奏 | Chords / Scales / Rhythm | 分頁標題 |
+| 設定、還原預設、完成 | Settings, Reset to Defaults, Done | |
+| 指板 | Fretboard | |
+| 封閉和弦（橫按） | Barre chord | |
+| 指型 | Shape | 「E 型」＝ E Shape；以開放和弦命名的可移動指型（CAGED） |
+| 開放和弦 | Open chord | |
+| 根音 | Root note | |
+| 琴格／弦 | Fret / String | |
+| 刷弦／指彈／琶音 | Strum / Fingerstyle / Arpeggio | 同時＝ Together |
+| 升記號／降記號 | Sharp / Flat | UI 選項用 Sharps ♯ / Flats ♭ |
+| 配色 | Color theme | |
+| 觸覺回饋 | Haptic feedback | |
+| 把位 | Scale position | 避免與 Position（指板上的點）混淆 |
+
 > **一致性**：程式與 UI 既有用語（主音、音級、按法、橫按／封閉和弦、斜線和弦、琶音、刷弦、指彈、悶音）為準。「斜線和弦」與「分數和弦」、「橫按」與「封閉和弦」目前並用，新增文案請固定採用：**斜線和弦**、**封閉和弦（橫按）**。「掃弦」在吉他另指 sweep picking，描述刷奏時請用「刷弦」。
 >
 > 新增術語時，補在對應表格並保持兩欄一致。不確定台灣慣用說法時，以教育部《音樂名詞》與台灣常用吉他教材為準，並在 PR / 筆記本中註明來源。

@@ -1,7 +1,8 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -391,5 +392,23 @@ describe("在地化：語言判斷與字串表", () => {
   })
   it("readLocaleInfo 讀取 Device（測試替身為繁體）並判為 zh-TW", () => {
     expect(pickLang(readLocaleInfo())).toBe("zh-TW")
+  })
+})
+
+describe("在地化：原始碼中的字串鍵都存在", () => {
+  const source = readFileSync(new URL("../GuitarToolbox/index.tsx", import.meta.url), "utf8")
+  const used = [...source.matchAll(/\bt\("([\w.]+)"/g)].map((m) => m[1])
+  const zh = CATALOG["zh-TW"] as Record<string, string>
+  it("畫面用到的每個 t(\"鍵\") 都在字串表內", () => {
+    expect(used.length).toBeGreaterThan(30)
+    used.forEach((k) => expect(zh[k], k).toBeDefined())
+  })
+  it("每個配色都有名稱鍵", () => {
+    Object.keys(PALETTES).forEach((k) => expect(zh[PALETTE_MESSAGE[k as keyof typeof PALETTE_MESSAGE]]).toBeDefined())
+  })
+  it("字串表沒有未使用的設定鍵（避免遷移後殘留）", () => {
+    const dynamic = ["palette.", "settings.boardLabel.", "settings.playStyle."]
+    Object.keys(zh).filter((k) => !dynamic.some((d) => k.startsWith(d))).forEach((k) =>
+      expect(used, `未使用的鍵：${k}`).toContain(k))
   })
 })

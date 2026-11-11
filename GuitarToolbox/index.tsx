@@ -10,7 +10,7 @@ import {
  *  Application    ：reducer、播放計畫（PlayPlan）等用例，只依賴 Domain
  *  Infrastructure ：Storage、音訊合成與播放、觸覺——所有副作用集中在此
  *  UI             ：Scripting 元件，只負責把狀態畫出來
- * 通用語言：主音、音級、和弦、按法、封閉和弦、斜線和弦、琶音、掃弦
+ * 通用語言：主音、音級、和弦、按法、封閉和弦、斜線和弦、琶音、刷弦
  * ════════════════════════════════════════════════ */
 
 /* ════════════════════════════════════════════════
@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.4.0"
+const APP_VERSION = "0.5.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -182,9 +182,9 @@ type BoardLabel = "finger" | "name" | "none" // 指板上顯示：手指編號�
 
 // 優先使用系統語意色（深色模式、輔助使用設定會自動適配）
 const PALETTES = {
-  classic: { label: "經典藍橘", dot: "systemBlue", bar: "systemBlue", root: "systemOrange", good: "systemGreen", bad: "systemRed", question: "systemPurple" },
-  forest: { label: "森林綠", dot: "#2e7d5b", bar: "#2e7d5b", root: "systemOrange", good: "systemGreen", bad: "systemRed", question: "systemPurple" },
-  mono: { label: "單色深灰", dot: "#48484a", bar: "#48484a", root: "systemOrange", good: "systemGreen", bad: "systemRed", question: "systemPurple" },
+  classic: { dot: "systemBlue", bar: "systemBlue", root: "systemOrange", good: "systemGreen", bad: "systemRed", question: "systemPurple" },
+  forest: { dot: "#2e7d5b", bar: "#2e7d5b", root: "systemOrange", good: "systemGreen", bad: "systemRed", question: "systemPurple" },
+  mono: { dot: "#48484a", bar: "#48484a", root: "systemOrange", good: "systemGreen", bad: "systemRed", question: "systemPurple" },
 } as const
 type PaletteKey = keyof typeof PALETTES
 type Palette = (typeof PALETTES)[PaletteKey]
@@ -436,7 +436,7 @@ const synth = (() => {
         console.error("播放失敗：" + String(e))
       }
     },
-    // gap：每個音相隔秒數（0 = 同時、0.04 = 掃弦、0.3 = 琶音）
+    // gap：每個音相隔秒數（0 = 同時、0.04 = 刷弦、0.3 = 琶音）
     async play(midis: number[], gap = 0, dur = 1.8): Promise<void> {
       return this.playEvents(strumEvents(midis, gap, dur))
     },
@@ -1581,7 +1581,7 @@ const progressionSections = (c: ProgressionCtx): Placed[] => {
     out.push(
       L(
         <Section key="play" header={<Text>播放</Text>}
-          footer={<Text>{`約 ${seconds} 秒。播放方式（同時／掃弦／琶音）可在設定中調整。`}</Text>}>
+          footer={<Text>{`約 ${seconds} 秒。播放方式（同時／刷弦／琶音）可在設定中調整。`}</Text>}>
           <Picker title="速度" value={s.bpm} pickerStyle="menu"
             onChanged={(v: number) => patch({ bpm: v })}>
             {TEMPOS.map((t) => <Text key={t} tag={t}>{`${t} BPM`}</Text>)}
@@ -3323,6 +3323,47 @@ const MESSAGES_ZH_TW = {
   "settings.title": "設定",
   "settings.reset": "還原預設",
   "settings.done": "完成",
+  "toolbar.soundOn": "聲音開啟",
+  "toolbar.soundOff": "聲音關閉",
+  "toolbar.settings": "設定",
+  "settings.preview": "預覽（F 大三和弦・封閉）",
+  "settings.appearance": "標示與外觀",
+  "settings.appearance.footer": "「指板標示」決定圓點內顯示手指編號或音名；「側邊顯示音名」則控制指板旁的音名列，兩者可分開設定。手指編號在速查頁是依指型自動推算的建議指法，實際按法可依手型調整。",
+  "settings.boardLabel": "指板標示",
+  "settings.boardLabel.finger": "手指",
+  "settings.boardLabel.name": "音名",
+  "settings.boardLabel.none": "不顯示",
+  "settings.sideNames": "側邊顯示音名",
+  "settings.stringNumbers": "標示弦號（1–6 弦）",
+  "settings.highlightRoot": "特別標示根音",
+  "settings.orientation": "指板方向",
+  "settings.orientation.vertical": "直式",
+  "settings.orientation.horizontal": "橫式",
+  "settings.palette": "配色",
+  "palette.classic": "經典藍橘",
+  "palette.forest": "森林綠",
+  "palette.mono": "單色深灰",
+  "settings.accidental": "升降記號",
+  "settings.accidental.auto": "自動",
+  "settings.accidental.sharp": "升記號 ♯",
+  "settings.accidental.flat": "降記號 ♭",
+  "settings.fretRows": "和弦圖格數",
+  "settings.fretRows.option": "{n} 格",
+  "settings.shapes": "封閉和弦指型",
+  "settings.shapes.footer": "決定和弦速查、和弦進行與和弦練習會列出哪些可移動指型（以開放和弦為名，如 E 型即 E 和弦的形狀）。開放和弦不受影響。D 型只按上方四條弦；C 型、G 型在高把位伸張較大，預設關閉。",
+  "settings.shapes.item": "{name} 型",
+  "settings.sound": "聲音與觸覺",
+  "settings.sound.footer": "開啟「自動播放」後，在和弦分頁按上一個／下一個、速查換和弦、認音題換題、音階換主音或類型、節奏頁點選和弦時會自動發聲。節奏頁的刷法與指彈有自己的節奏設定，不受「和弦播放方式」影響。若沒聽到聲音，請確認裝置未開啟靜音模式，且音量已調高。",
+  "settings.soundOn": "啟用聲音",
+  "settings.autoPlay": "自動播放",
+  "settings.playStyle": "和弦播放方式",
+  "settings.playStyle.block": "同時",
+  "settings.playStyle.strum": "刷弦",
+  "settings.playStyle.arpeggio": "琶音",
+  "settings.haptics": "觸覺回饋",
+  "settings.audition": "試聽 F 大三和弦",
+  "settings.about": "關於",
+  "settings.version": "版號",
 } as const
 type MessageKey = keyof typeof MESSAGES_ZH_TW
 type Messages = Readonly<Record<MessageKey, string>>
@@ -3333,6 +3374,47 @@ const MESSAGES_EN: Messages = {
   "settings.title": "Settings",
   "settings.reset": "Reset to Defaults",
   "settings.done": "Done",
+  "toolbar.soundOn": "Sound On",
+  "toolbar.soundOff": "Sound Off",
+  "toolbar.settings": "Settings",
+  "settings.preview": "Preview (F major, barre chord)",
+  "settings.appearance": "Labels & Appearance",
+  "settings.appearance.footer": "“Board Labels” sets whether the dots show finger numbers or note names; “Show Note Names at Side” controls the note-name column beside the fretboard. They can be set independently. Finger numbers on the Chords tab are suggested fingerings worked out from the shape; adjust them to fit your hand.",
+  "settings.boardLabel": "Board Labels",
+  "settings.boardLabel.finger": "Finger",
+  "settings.boardLabel.name": "Note",
+  "settings.boardLabel.none": "None",
+  "settings.sideNames": "Show Note Names at Side",
+  "settings.stringNumbers": "Show String Numbers (1–6)",
+  "settings.highlightRoot": "Highlight Root Notes",
+  "settings.orientation": "Fretboard Orientation",
+  "settings.orientation.vertical": "Vertical",
+  "settings.orientation.horizontal": "Horizontal",
+  "settings.palette": "Color Theme",
+  "palette.classic": "Classic Blue & Orange",
+  "palette.forest": "Forest Green",
+  "palette.mono": "Mono Gray",
+  "settings.accidental": "Accidentals",
+  "settings.accidental.auto": "Auto",
+  "settings.accidental.sharp": "Sharps ♯",
+  "settings.accidental.flat": "Flats ♭",
+  "settings.fretRows": "Chord Diagram Frets",
+  "settings.fretRows.option": "{n} frets",
+  "settings.shapes": "Barre Chord Shapes",
+  "settings.shapes.footer": "Chooses which movable shapes appear in Chord Finder, Progressions and Practice. Shapes are named after the open chord they come from; for example, the E shape is the shape of an open E chord. Open chords are not affected. The D shape uses only the top four strings; the C and G shapes need a wide stretch high on the neck, so they are off by default.",
+  "settings.shapes.item": "{name} Shape",
+  "settings.sound": "Sound & Haptics",
+  "settings.sound.footer": "With “Auto-Play” on, chords play automatically when you step through chords, change chords in the Finder, change a question in the ear trainer, change the key or scale type, or tap a chord on the Rhythm tab. Strumming and fingerstyle patterns on the Rhythm tab have their own settings and ignore “Chord Playback”. If you hear nothing, check that the device is not in silent mode and the volume is up.",
+  "settings.soundOn": "Sound",
+  "settings.autoPlay": "Auto-Play",
+  "settings.playStyle": "Chord Playback",
+  "settings.playStyle.block": "Together",
+  "settings.playStyle.strum": "Strum",
+  "settings.playStyle.arpeggio": "Arpeggio",
+  "settings.haptics": "Haptic Feedback",
+  "settings.audition": "Play F Major Chord",
+  "settings.about": "About",
+  "settings.version": "Version",
 }
 const CATALOG: Readonly<Record<Lang, Messages>> = { "zh-TW": MESSAGES_ZH_TW, en: MESSAGES_EN }
 
@@ -3343,6 +3425,11 @@ const formatMessage = (template: string, params?: MessageParams): string =>
     params !== undefined && name in params ? String(params[name]) : whole)
 type Translate = (key: MessageKey, params?: MessageParams) => string
 const translatorFor = (lang: Lang): Translate => (key, params) => formatMessage(CATALOG[lang][key], params)
+
+// 配色名稱的字串鍵（PALETTES 只存顏色，名稱屬於文案）
+const PALETTE_MESSAGE: Readonly<Record<PaletteKey, MessageKey>> = {
+  classic: "palette.classic", forest: "palette.forest", mono: "palette.mono",
+}
 
 /* ════════════════════════════════════════════════
  * Application：設定的解析（純函式）
@@ -3522,7 +3609,7 @@ function PrefsSheet(props: {
           topBarLeading: <Button title={t("settings.reset")} action={onReset} />,
           confirmationAction: <Button title={t("settings.done")} action={onClose} />,
         }}>
-        <Section header={<Text>預覽（F 大三和弦・封閉）</Text>}>
+        <Section header={<Text>{t("settings.preview")}</Text>}>
           <HStack>
             <Spacer />
             <ChordBoard spec={PREVIEW_SPEC} prefs={prefs} nm={nm} width={previewWidth} />
@@ -3531,48 +3618,46 @@ function PrefsSheet(props: {
         </Section>
 
         <Section
-          header={<Text>標示與外觀</Text>}
-          footer={<Text>「指板標示」決定圓點內顯示手指編號或音名；「側邊顯示音名」則控制指板旁的音名列，兩者可分開設定。手指編號在速查頁是依指型自動推算的建議指法，實際按法可依手型調整。</Text>}>
-          <Picker title="指板標示" value={prefs.boardLabel} pickerStyle="segmented"
+          header={<Text>{t("settings.appearance")}</Text>}
+          footer={<Text>{t("settings.appearance.footer")}</Text>}>
+          <Picker title={t("settings.boardLabel")} value={prefs.boardLabel} pickerStyle="segmented"
             onChanged={(v: string) => onChange({ boardLabel: v as BoardLabel })}>
-            <Text tag="finger">手指</Text>
-            <Text tag="name">音名</Text>
-            <Text tag="none">不顯示</Text>
+            <Text tag="finger">{t("settings.boardLabel.finger")}</Text>
+            <Text tag="name">{t("settings.boardLabel.name")}</Text>
+            <Text tag="none">{t("settings.boardLabel.none")}</Text>
           </Picker>
-          <Toggle title="側邊顯示音名" value={prefs.showSideNames}
+          <Toggle title={t("settings.sideNames")} value={prefs.showSideNames}
             onChanged={(v: boolean) => onChange({ showSideNames: v })} />
-          <Toggle title="標示弦號（1–6 弦）" value={prefs.showStringNumbers}
+          <Toggle title={t("settings.stringNumbers")} value={prefs.showStringNumbers}
             onChanged={(v: boolean) => onChange({ showStringNumbers: v })} />
-          <Toggle title="特別標示根音" value={prefs.highlightRoot}
+          <Toggle title={t("settings.highlightRoot")} value={prefs.highlightRoot}
             onChanged={(v: boolean) => onChange({ highlightRoot: v })} />
-          <Picker title="指板方向" value={prefs.orientation} pickerStyle="segmented"
+          <Picker title={t("settings.orientation")} value={prefs.orientation} pickerStyle="segmented"
             onChanged={(v: string) => onChange({ orientation: v as Orientation })}>
-            <Text tag="vertical">直式</Text>
-            <Text tag="horizontal">橫式</Text>
+            <Text tag="vertical">{t("settings.orientation.vertical")}</Text>
+            <Text tag="horizontal">{t("settings.orientation.horizontal")}</Text>
           </Picker>
-          <Picker title="配色" value={prefs.palette} pickerStyle="menu"
+          <Picker title={t("settings.palette")} value={prefs.palette} pickerStyle="menu"
             onChanged={(v: string) => onChange({ palette: v as PaletteKey })}>
-            {PALETTE_KEYS.map((k) => <Text key={k} tag={k}>{PALETTES[k].label}</Text>)}
+            {PALETTE_KEYS.map((k) => <Text key={k} tag={k}>{t(PALETTE_MESSAGE[k])}</Text>)}
           </Picker>
-          <Picker title="升降記號" value={prefs.accidental} pickerStyle="segmented"
+          <Picker title={t("settings.accidental")} value={prefs.accidental} pickerStyle="segmented"
             onChanged={(v: string) => onChange({ accidental: v as Accidental })}>
-            <Text tag="auto">自動</Text>
-            <Text tag="sharp">升記號 ♯</Text>
-            <Text tag="flat">降記號 ♭</Text>
+            <Text tag="auto">{t("settings.accidental.auto")}</Text>
+            <Text tag="sharp">{t("settings.accidental.sharp")}</Text>
+            <Text tag="flat">{t("settings.accidental.flat")}</Text>
           </Picker>
-          <Picker title="和弦圖格數" value={prefs.fretRows} pickerStyle="segmented"
+          <Picker title={t("settings.fretRows")} value={prefs.fretRows} pickerStyle="segmented"
             onChanged={(v: number) => onChange({ fretRows: v })}>
-            <Text tag={4}>4 格</Text>
-            <Text tag={5}>5 格</Text>
-            <Text tag={6}>6 格</Text>
+            {[4, 5, 6].map((n) => <Text key={n} tag={n}>{t("settings.fretRows.option", { n })}</Text>)}
           </Picker>
         </Section>
 
         <Section
-          header={<Text>封閉和弦指型</Text>}
-          footer={<Text>決定和弦速查、和弦進行與和弦練習會列出哪些可移動指型（以開放和弦為名，如 E 型即 E 和弦的形狀）。開放和弦不受影響。D 型只按上方四條弦；C 型、G 型在高把位伸張較大，預設關閉。</Text>}>
+          header={<Text>{t("settings.shapes")}</Text>}
+          footer={<Text>{t("settings.shapes.footer")}</Text>}>
           {BARRE_SHAPE_NAMES.map((n) => (
-            <Toggle key={n} title={`${n} 型`} value={prefs.barreShapes.includes(n)}
+            <Toggle key={n} title={t("settings.shapes.item", { name: n })} value={prefs.barreShapes.includes(n)}
               onChanged={(v: boolean) => onChange({
                 barreShapes: BARRE_SHAPE_NAMES.filter((x) => (x === n ? v : prefs.barreShapes.includes(x))),
               })} />
@@ -3580,27 +3665,27 @@ function PrefsSheet(props: {
         </Section>
 
         <Section
-          header={<Text>聲音與觸覺</Text>}
-          footer={<Text>開啟「自動播放」後，在和弦分頁按上一個／下一個、速查換和弦、認音題換題、音階換主音或類型、節奏頁點選和弦時會自動發聲。節奏頁的刷法與指彈有自己的節奏設定，不受「和弦播放方式」影響。若沒聽到聲音，請確認裝置未開啟靜音模式，且音量已調高。</Text>}>
-          <Toggle title="啟用聲音" value={prefs.soundOn}
+          header={<Text>{t("settings.sound")}</Text>}
+          footer={<Text>{t("settings.sound.footer")}</Text>}>
+          <Toggle title={t("settings.soundOn")} value={prefs.soundOn}
             onChanged={(v: boolean) => onChange({ soundOn: v })} />
-          <Toggle title="自動播放" value={prefs.autoPlay}
+          <Toggle title={t("settings.autoPlay")} value={prefs.autoPlay}
             onChanged={(v: boolean) => onChange({ autoPlay: v })} />
-          <Picker title="和弦播放方式" value={prefs.playStyle} pickerStyle="segmented"
+          <Picker title={t("settings.playStyle")} value={prefs.playStyle} pickerStyle="segmented"
             onChanged={(v: string) => onChange({ playStyle: v as PlayStyle })}>
-            <Text tag="block">同時</Text>
-            <Text tag="strum">掃弦</Text>
-            <Text tag="arpeggio">琶音</Text>
+            <Text tag="block">{t("settings.playStyle.block")}</Text>
+            <Text tag="strum">{t("settings.playStyle.strum")}</Text>
+            <Text tag="arpeggio">{t("settings.playStyle.arpeggio")}</Text>
           </Picker>
-          <Toggle title="觸覺回饋" value={prefs.haptics}
+          <Toggle title={t("settings.haptics")} value={prefs.haptics}
             onChanged={(v: boolean) => onChange({ haptics: v })} />
-          <Button title="試聽 F 大三和弦" systemImage="play.fill"
+          <Button title={t("settings.audition")} systemImage="play.fill"
             action={() => playChord(PREVIEW_SPEC.frets, prefs.playStyle)} />
         </Section>
 
-        <Section header={<Text>關於</Text>}>
+        <Section header={<Text>{t("settings.about")}</Text>}>
           <HStack>
-            <Text>版號</Text>
+            <Text>{t("settings.version")}</Text>
             <Spacer />
             <Text foregroundStyle="secondaryLabel">{APP_VERSION}</Text>
           </HStack>
@@ -3641,7 +3726,7 @@ function App({ width, height }: { width: number; height: number }) {
         toolbar={{
           topBarLeading: (
             <Button
-              title={prefs.soundOn ? "聲音開啟" : "聲音關閉"}
+              title={prefs.soundOn ? t("toolbar.soundOn") : t("toolbar.soundOff")}
               systemImage={prefs.soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill"}
               action={() => {
                 haptic(prefs, "light")
@@ -3649,7 +3734,7 @@ function App({ width, height }: { width: number; height: number }) {
               }} />
           ),
           topBarTrailing: (
-            <Button title="設定" systemImage="gearshape"
+            <Button title={t("toolbar.settings")} systemImage="gearshape"
               action={() => setShowSettings(true)} />
           ),
         }}>
@@ -3708,6 +3793,6 @@ export {
   parsePrefs, parseHub, parseDrill, parseRhythm, assertNever, unwrapOr, ok, err, prefsRepository, hubRepository,
   TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH,
   cellHeightFor,
-  pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo,
+  pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, PALETTE_MESSAGE,
   effectiveBass, keyTitleOf, finderViewOf, stepIndex, progressionSeconds, practiceDeckOf, DEFAULT_HUB,
 }
