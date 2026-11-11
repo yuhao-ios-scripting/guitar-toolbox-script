@@ -4,9 +4,11 @@ import type { QualityKey } from "../GuitarToolbox/index"
 import {
   FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, rhythmPlaySection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
-  resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
+  resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_MESSAGE, QUALITY_FORMULA, voicingsInScope,
 } from "../GuitarToolbox/index"
 
+const tz = translatorFor("zh-TW")
+const te = translatorFor("en")
 type Frets = readonly (number | null)[]
 const ROOTS = Array.from({ length: 12 }, (_, i) => i)
 const pitchClasses = (frets: Frets): number[] =>
@@ -45,7 +47,7 @@ describe("和弦組成", () => {
 describe("按法音高（表格化：每個根音 × 類型）", () => {
   ROOTS.forEach((root) => FINDER_QUALITIES.forEach(({ key: q }) => {
     getVoicings(root, q).forEach((v) => {
-      it(`${noteName(false)(root)} ${q}「${voicingTitle(v)}」只含和弦音、最低音為根音、至多缺一音`, () => {
+      it(`${noteName(false)(root)} ${q}「${voicingTitle(v, tz)}」只含和弦音、最低音為根音、至多缺一音`, () => {
         const tones = chordTones(root, q)
         const pcs = pitchClasses(v.frets)
         expect(pcs.every((p) => tones.includes(p))).toBe(true)
@@ -109,7 +111,7 @@ describe("指法推算", () => {
     ROOTS.forEach((r) => FINDER_QUALITIES.forEach((q) => getVoicings(r, q.key).forEach((v) => {
       const { fingers } = resolveFingering(v.frets)
       fingers.forEach((n) => { expect(n).toBeGreaterThanOrEqual(0); expect(n).toBeLessThanOrEqual(4) })
-      v.frets.forEach((f, i) => { if (f !== null && f > 0) expect(fingers[i], voicingTitle(v)).toBeGreaterThan(0) })
+      v.frets.forEach((f, i) => { if (f !== null && f > 0) expect(fingers[i], voicingTitle(v, tz)).toBeGreaterThan(0) })
     })))
   })
 })
@@ -142,18 +144,24 @@ describe("文案（UI 層）", () => {
   it("QUALITY_KEYS 與和弦資料庫的類型一一對應", () => {
     expect(FINDER_QUALITIES.map((q) => q.key)).toEqual([...QUALITY_KEYS])
   })
-  it("每個和弦類型都有名稱與公式", () => {
+  it("每個和弦類型都有中英文名稱與公式", () => {
     FINDER_QUALITIES.forEach((q) => {
-      expect(QUALITY_TEXT[q.key], q.key).toBeDefined()
-      expect(qualityLabel(q.key)).not.toBe(q.key)
+      expect(QUALITY_FORMULA[q.key], q.key).toBeTruthy()
+      expect(qualityLabel(q.key, tz)).not.toBe(q.key)
+      expect(qualityLabel(q.key, te)).toContain(q.suffix === "" ? "Major" : q.suffix)
     })
+    expect(Object.keys(QUALITY_MESSAGE).sort()).toEqual([...QUALITY_KEYS].sort())
   })
-  it("按法名稱：開放、E 型、封閉、變化、換低音", () => {
-    expect(voicingTitle({ origin: { type: "open" }, rebassed: false })).toBe("開放和弦")
+  it("按法名稱：開放、E 型、封閉、變化、換低音（中英文）", () => {
+    const open = { origin: { type: "open" }, rebassed: false } as const
     const shape = (fret: number, variant: boolean) =>
       ({ type: "shape", shape: "E", fret, variant }) as const
-    expect(voicingTitle({ origin: shape(0, false), rebassed: false })).toBe("E 型")
-    expect(voicingTitle({ origin: shape(3, true), rebassed: true })).toBe("E 型封閉（第 3 格）・變化・換低音")
+    expect(voicingTitle(open, tz)).toBe("開放和弦")
+    expect(voicingTitle(open, te)).toBe("Open chord")
+    expect(voicingTitle({ origin: shape(0, false), rebassed: false }, tz)).toBe("E 型")
+    expect(voicingTitle({ origin: shape(0, false), rebassed: false }, te)).toBe("E shape")
+    expect(voicingTitle({ origin: shape(3, true), rebassed: true }, tz)).toBe("E 型封閉（第 3 格）・變化・換低音")
+    expect(voicingTitle({ origin: shape(3, true), rebassed: true }, te)).toBe("E shape barre (fret 3) (variant) (re-bassed)")
   })
 })
 
@@ -164,8 +172,9 @@ describe("和弦分頁的用例函式", () => {
     expect(effectiveBass(mod12(0), 7)).toBe(7)
   })
   it("keyTitleOf：調名與大小調", () => {
-    expect(keyTitleOf({ tonic: mod12(5), mode: "major" }, true)).toBe("F 大調")
-    expect(keyTitleOf({ tonic: mod12(9), mode: "minor" }, false)).toBe("A 自然小調")
+    expect(keyTitleOf({ tonic: mod12(5), mode: "major" }, true, tz)).toBe("F 大調")
+    expect(keyTitleOf({ tonic: mod12(9), mode: "minor" }, false, tz)).toBe("A 自然小調")
+    expect(keyTitleOf({ tonic: mod12(9), mode: "minor" }, false, te)).toBe("A natural minor")
   })
   it("finderViewOf：斜線和弦標題與降記號偏好", () => {
     const v = finderViewOf({ ...DEFAULT_HUB, finderRoot: mod12(0), finderQuality: "maj", finderBass: 7 }, "auto")
@@ -202,13 +211,13 @@ describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量�
 
   it("finderSections：左右各一個區塊", () => {
     const out = finderSections({
-      s: hub, prefs, bw: 320, finder: finderViewOf(hub, "auto"), patch: noop, auditionFinder: noop,
+      s: hub, prefs, bw: 320, t: tz, finder: finderViewOf(hub, "auto"), patch: noop, auditionFinder: noop,
     })
     expect(out.map((p) => p.pane)).toEqual(["left", "right"])
   })
   it("progressionSections：有聲音時三個左欄＋一個右欄", () => {
     const out = progressionSections({
-      s: hub, prefs, bw: 320, keyTitle: "C 大調", keyFlats: false, progs, progIdx: 0, prog, progChords,
+      s: hub, prefs, bw: 320, t: tz, keyTitle: "C 大調", keyFlats: false, progs, progIdx: 0, prog, progChords,
       progSummary: "x", seconds: 12, selIdx: 0, sel: progChords[0], patch: noop, setSelected: noop,
       choose: noop, playAll: noop, openInFinder: noop,
     })
@@ -218,7 +227,7 @@ describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量�
     const deck = buildDeck(key, "open", prefs.barreShapes, hub.degrees, hub.qualities)
     const ordered = deck.voicings
     const out = practiceSections({
-      s: hub, prefs, bw: 320, keyTitle: "C 大調", keyFlats: false, prog, chords: diatonicChords(key),
+      s: hub, prefs, bw: 320, t: tz, keyTitle: "C 大調", keyFlats: false, prog, chords: diatonicChords(key),
       hasOpen: [true], diatonicName: () => "C", deck, ordered, current: ordered[0],
       session: { seed: 1, index: 0 }, skippedText: "", nothingSelected: false, patch: noop,
       dispatch: noop, step: noop, openInFinder: noop,
@@ -240,7 +249,7 @@ describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量�
     })).toBeTruthy()
     const voicings = rhythmVoicingsOf(s, prefs.barreShapes)
     const chord = rhythmChordSections({
-      s, prefs, bw: 320, naming: chordNaming(s.chordRoot, s.chordQuality, s.chordBass, "auto"),
+      s, prefs, bw: 320, t: tz, naming: chordNaming(s.chordRoot, s.chordQuality, s.chordBass, "auto"),
       voicings, chosenIdx: 0, changeChord: noop, chooseVoicing: noop,
     })
     expect(chord).toHaveLength(2)
@@ -426,9 +435,12 @@ describe("在地化：原始碼中的字串鍵都存在", () => {
   it("每個配色都有名稱鍵", () => {
     Object.keys(PALETTES).forEach((k) => expect(zh[PALETTE_MESSAGE[k as keyof typeof PALETTE_MESSAGE]]).toBeDefined())
   })
-  it("字串表沒有未使用的設定鍵（避免遷移後殘留）", () => {
-    const dynamic = ["palette.", "settings.boardLabel.", "settings.playStyle."]
-    Object.keys(zh).filter((k) => !dynamic.some((d) => k.startsWith(d))).forEach((k) =>
-      expect(used, `未使用的鍵：${k}`).toContain(k))
+  it("字串表沒有未使用的鍵（避免遷移後殘留）", () => {
+    // 去掉字串表本身，剩下的原始碼中該鍵必須以字串字面值出現（t("鍵")、鍵對照表或進行定義）
+    const start = source.indexOf("const MESSAGES_ZH_TW")
+    const end = source.indexOf("const CATALOG")
+    const rest = source.slice(0, start) + source.slice(end)
+    Object.keys(zh).filter((k) => !["tab.", "settings.done", "settings.reset", "settings.title"].some((p) => k.startsWith(p) && false))
+      .forEach((k) => expect(rest.includes(`"${k}"`), `未使用的鍵：${k}`).toBe(true))
   })
 })

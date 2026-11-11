@@ -71,10 +71,10 @@
 ## 7. 文案
 
 - 預設繁體中文（`zh-TW`），樂理用語依 AGENTS.md 第 3 章對照表。
-- 領域層不放文案：和弦類型名稱在 `QUALITY_TEXT`、按法名稱在 `voicingTitle`、刷法名稱在 `STROKE_NAME_ZH`。
+- 領域層不放文案：和弦類型名稱走 `QUALITY_MESSAGE`、按法名稱在 `voicingTitle`，兩者都用字串鍵；刷法名稱 `STROKE_NAME_ZH` 尚待遷移。
 - **字串表（已建立骨架）**：`MESSAGES_ZH_TW`（鍵的唯一來源）與 `MESSAGES_EN`（型別 `Messages`，缺鍵無法編譯）；以 `t("key", { 參數 })` 取用，範本中的 `{name}` 為佔位符。語言由 `pickLang(readLocaleInfo())` 決定：**繁體中文（含沒有地區的 `zh`、`zh-Hant`、`zh_TW`、`zh-HK`）用 `zh-TW`，簡體中文與其他語言用 `en`**。
 - **新增文案的做法**：先在 `MESSAGES_ZH_TW` 加鍵，再補 `MESSAGES_EN`（兩邊佔位符須相同，測試會檢查），畫面用 `t(...)`；`t` 目前由 `App` 傳給需要的元件（Scripting 文件只記載 `useContext` 而未記載建立 context 的 API，所以以 props 傳遞）。
-- **遷移進度**：分頁標題、工具列與整個設定頁（約 45 個字串）已遷移並有英文；和弦、音階、節奏三個分頁與無障礙說明（`describe*`）仍是內嵌的繁體中文（見 backlog B-006）。英文用語見 AGENTS.md「英文 UI 用語」。
+- **遷移進度**：分頁標題、工具列、整個設定頁與整個和弦分頁（速查、進行、練習）已遷移並有英文；音階與節奏分頁（節奏頁最底的選擇和弦區已用共用字串）和無障礙說明（`describe*`）仍是內嵌的繁體中文（見 backlog B-006）。和弦類型、按法名稱、調名、進行名稱都由字串鍵加參數組成（`qualityLabel`、`voicingTitle`、`keyTitleOf`、進行的 `labelKey`），純函式需要 `t` 時以參數傳入。英文用語見 AGENTS.md「英文 UI 用語」。
 - **語系 API（依 Scripting 官方文件）**：可用 `Device.systemLanguageCode`（如 `"zh"`）、`Device.systemLanguageTag`（如 `"en-US"`）、`Device.systemCountryCode`、`Device.preferredLanguages`（如 `["en-US", "zh-Hans-CN"]`）、`Device.systemLocale`（底線格式 `"en_US"`）；日期用 `DateFormatter`。**文件未記載**：`Locale` 類別、`Intl`、`NumberFormatter`、`script.json` 的在地化欄位，也沒有任何「介面文字自動跟隨系統語言」的機制，因此字串表必須自己實作。文件的範例只有簡體 `zh-Hans-CN`，實機（繁體中文系統）回報：`systemLanguageTag` 為 `"zh_TW"`（底線）、`systemLanguageCode` 為 `"zh"`，`preferredLanguages` 為 `undefined`，因此判斷不依賴 `preferredLanguages`，並同時接受底線與連字號。
 
 ## 8. 檢查清單（新增或修改畫面時）
@@ -92,6 +92,6 @@
 | 項目 | 狀態 |
 |---|---|
 | 橫式指板單格寬度下限 36 pt（受可用寬度限制） | 高度仍 ≥ 44；窄螢幕上寬度略小於 44 |
-| 英文在地化 | 設定頁與工具列完成；和弦、音階、節奏分頁與無障礙說明未遷移 |
+| 英文在地化 | 設定頁、工具列與和弦分頁完成；音階、節奏分頁與無障礙說明未遷移 |
 | VoiceOver、最大字級的實機驗證 | 需擁有者在實機確認 |
 | 音階頁、認音練習以外的圖形（刷法格以外）逐項敘述 | 目前以整張圖或逐格說明為主 |

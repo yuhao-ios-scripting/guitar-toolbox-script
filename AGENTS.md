@@ -209,6 +209,15 @@ scripts/src/
 | 配色 | Color theme | |
 | 觸覺回饋 | Haptic feedback | |
 | 把位 | Scale position | 避免與 Position（指板上的點）混淆 |
+| 大三和弦／小三和弦 | Major triad / Minor triad | 和弦類型名稱後括號內的記號（maj、m、7…）兩種語言相同 |
+| 屬七／大七／小七和弦 | Dominant 7th / Major 7th / Minor 7th | |
+| 掛留二／四和弦 | Suspended 2nd / Suspended 4th | |
+| 半減七和弦 | Half-diminished | |
+| 減三／增三和弦 | Diminished triad / Augmented triad | |
+| 斜線和弦 | Slash chord | 「指定低音」＝ Bass note |
+| 和弦進行 | Chord progression | |
+| 調式（大調／自然小調） | Mode (Major / Natural Minor) | 調名：C major、A natural minor |
+| 速查／進行／練習 | Finder / Progression / Practice | 和弦分頁的三個檢視 |
 
 > **一致性**：程式與 UI 既有用語（主音、音級、按法、橫按／封閉和弦、斜線和弦、琶音、刷弦、指彈、悶音）為準。「斜線和弦」與「分數和弦」、「橫按」與「封閉和弦」目前並用，新增文案請固定採用：**斜線和弦**、**封閉和弦（橫按）**。「掃弦」在吉他另指 sweep picking，描述刷奏時請用「刷弦」。
 >
