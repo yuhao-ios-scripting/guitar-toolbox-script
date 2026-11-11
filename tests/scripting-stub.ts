@@ -10,3 +10,4 @@ export const useEffect = () => undefined
 export const useMemo = <T,>(f: () => T) => f()
 export const useState = <T,>(v: T) => [v, () => undefined] as const
 export const useReducer = <S,>(_r: unknown, s: S) => [s, () => undefined] as const
+export const Device = { systemLanguageTag: "zh_TW", systemLanguageCode: "zh", systemCountryCode: undefined, systemScriptCode: undefined }

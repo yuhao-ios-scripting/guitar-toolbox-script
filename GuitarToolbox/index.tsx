@@ -1,5 +1,5 @@
 import {
-  Button, Circle, GeometryReader, HStack, Label, List, Navigation, NavigationStack, Picker,
+  Button, Circle, Device, GeometryReader, HStack, Label, List, Navigation, NavigationStack, Picker,
   Rectangle, Script, ScrollView, Section, Spacer, TabView, Text, Toggle,
   VStack, ZStack, useEffect, useMemo, useReducer, useState,
 } from "scripting"
@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.3.0"
+const APP_VERSION = "0.4.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -3291,6 +3291,60 @@ function RhythmStudio({ prefs, active, layout }: { prefs: DiagramPrefs; active: 
 }
 
 /* ════════════════════════════════════════════════
+ * 在地化：字串表與語言判斷（zh-TW、en）
+ * 文案以「鍵」引用，兩種語言的鍵必須完全一致（en 少一個鍵就無法編譯）。
+ * 目前只遷移了分頁標題與設定頁的三個字串；其餘文案仍內嵌於畫面，見 backlog B-006。
+ * ════════════════════════════════════════════════ */
+type Lang = "zh-TW" | "en"
+
+// 系統語言資訊。Scripting 在繁體中文系統回傳 systemLanguageTag = "zh_TW"（底線）、code = "zh"
+interface LocaleInfo {
+  readonly tag?: string
+  readonly code?: string
+  readonly country?: string
+  readonly script?: string
+}
+// 規則：只有繁體中文（含沒有地區的 "zh"）用 zh-TW；簡體中文（Hans、CN、SG）與其他語言一律用英文
+const SIMPLIFIED_COUNTRIES: readonly string[] = ["CN", "SG"]
+const pickLang = (info: LocaleInfo): Lang => {
+  const parts = (info.tag ?? "").replace(/_/g, "-").split("-").filter((x) => x.length > 0)
+  const code = (info.code ?? parts[0] ?? "").toLowerCase()
+  if (code !== "zh") return "en"
+  const subtags = parts.slice(1)
+  const script = info.script ?? subtags.find((x) => x.length === 4)
+  const country = (info.country ?? subtags.find((x) => x.length === 2) ?? "").toUpperCase()
+  return script === "Hans" || SIMPLIFIED_COUNTRIES.includes(country) ? "en" : "zh-TW"
+}
+
+const MESSAGES_ZH_TW = {
+  "tab.chords": "和弦",
+  "tab.scales": "音階",
+  "tab.rhythm": "節奏",
+  "settings.title": "設定",
+  "settings.reset": "還原預設",
+  "settings.done": "完成",
+} as const
+type MessageKey = keyof typeof MESSAGES_ZH_TW
+type Messages = Readonly<Record<MessageKey, string>>
+const MESSAGES_EN: Messages = {
+  "tab.chords": "Chords",
+  "tab.scales": "Scales",
+  "tab.rhythm": "Rhythm",
+  "settings.title": "Settings",
+  "settings.reset": "Reset to Defaults",
+  "settings.done": "Done",
+}
+const CATALOG: Readonly<Record<Lang, Messages>> = { "zh-TW": MESSAGES_ZH_TW, en: MESSAGES_EN }
+
+// 範本中的 {name} 以參數取代；缺參數時保留原樣，方便在畫面上發現遺漏
+type MessageParams = Readonly<Record<string, string | number>>
+const formatMessage = (template: string, params?: MessageParams): string =>
+  template.replace(/\{(\w+)\}/g, (whole, name: string) =>
+    params !== undefined && name in params ? String(params[name]) : whole)
+type Translate = (key: MessageKey, params?: MessageParams) => string
+const translatorFor = (lang: Lang): Translate => (key, params) => formatMessage(CATALOG[lang][key], params)
+
+/* ════════════════════════════════════════════════
  * Application：設定的解析（純函式）
  * 輸入是儲存層讀到的任意值；回傳驗證並補齊預設值的設定，或說明失敗原因。
  * ════════════════════════════════════════════════ */
@@ -3371,6 +3425,16 @@ const parseRhythm = (raw: unknown): Result<string, RhythmSettings> => {
  * 儲存失敗一律不影響使用。各設定的型別與預設值留在對應的領域區塊。
  * ════════════════════════════════════════════════ */
 
+// 系統語言：讀取失敗或欄位不存在時回傳空資訊（pickLang 會選英文）
+const readLocaleInfo = (): LocaleInfo => {
+  try {
+    return {
+      tag: Device.systemLanguageTag, code: Device.systemLanguageCode,
+      country: Device.systemCountryCode, script: Device.systemScriptCode,
+    }
+  } catch { return {} }
+}
+
 // 讀取失敗（例如 Storage 拋例外）視同沒有資料
 const readStored = (key: string): unknown => {
   try { return Storage.get(key) } catch { return undefined }
@@ -3436,6 +3500,7 @@ const sheetBoardWidth = (layout: Layout): number =>
   Math.max(240, Math.min(layout.width, layout.pad ? 540 : layout.width) - BOARD_INSET)
 
 function PrefsSheet(props: {
+  t: Translate
   prefs: DiagramPrefs
   pad: boolean
   previewWidth: number
@@ -3443,19 +3508,19 @@ function PrefsSheet(props: {
   onReset: () => void
   onClose: () => void
 }) {
-  const { prefs, pad, previewWidth, onChange, onReset, onClose } = props
+  const { t, prefs, pad, previewWidth, onChange, onReset, onClose } = props
   const nm = noteName(resolveFlats(prefs.accidental, prefersFlats({ tonic: mod12(5), mode: "major" })))
 
   return (
     <NavigationStack>
       <List
-        navigationTitle="設定"
+        navigationTitle={t("settings.title")}
         navigationBarTitleDisplayMode="inline"
         presentationDetents={settingsDetents(pad)}
         presentationDragIndicator={pad ? "hidden" : "visible"}
         toolbar={{
-          topBarLeading: <Button title="還原預設" action={onReset} />,
-          confirmationAction: <Button title="完成" action={onClose} />,
+          topBarLeading: <Button title={t("settings.reset")} action={onReset} />,
+          confirmationAction: <Button title={t("settings.done")} action={onClose} />,
         }}>
         <Section header={<Text>預覽（F 大三和弦・封閉）</Text>}>
           <HStack>
@@ -3560,6 +3625,7 @@ function App({ width, height }: { width: number; height: number }) {
   const initialPrefs = useMemo(() => prefsRepository.load(), [])
   const [prefs, setPrefs] = useState<DiagramPrefs>(initialPrefs)
   const [showSettings, setShowSettings] = useState(false)
+  const t = useMemo(() => translatorFor(pickLang(readLocaleInfo())), [])
 
   useEffect(() => { prefsRepository.save(prefs) }, [prefs])
   // 預先設定音訊工作階段，第一次播放才不會延遲
@@ -3602,6 +3668,7 @@ function App({ width, height }: { width: number; height: number }) {
         onChanged: setShowSettings,
         content: (
           <PrefsSheet
+            t={t}
             prefs={prefs}
             pad={layout.pad}
             previewWidth={sheetBoardWidth(layout)}
@@ -3610,9 +3677,9 @@ function App({ width, height }: { width: number; height: number }) {
             onClose={() => setShowSettings(false)} />
         ),
       }}>
-      {screen("和弦", "music.note.list", 0, <ChordHub prefs={prefs} layout={layout} />)}
-      {screen("音階", "music.quarternote.3", 1, <ScaleTab prefs={prefs} layout={layout} />)}
-      {screen("節奏", "metronome", 2, <RhythmStudio prefs={prefs} active={tab === 2} layout={layout} />)}
+      {screen(t("tab.chords"), "music.note.list", 0, <ChordHub prefs={prefs} layout={layout} />)}
+      {screen(t("tab.scales"), "music.quarternote.3", 1, <ScaleTab prefs={prefs} layout={layout} />)}
+      {screen(t("tab.rhythm"), "metronome", 2, <RhythmStudio prefs={prefs} active={tab === 2} layout={layout} />)}
     </TabView>
   )
 }
@@ -3630,7 +3697,7 @@ async function run() {
 run()
 
 // 僅供單元測試匯入的純領域函式（Scripting 執行時忽略匯出）。
-export type { QualityKey }
+export type { QualityKey, Lang, MessageKey }
 export {
   mod12, noteName, prefersFlats, isQualityKey, QUALITY_KEYS, shuffled, nextRandom, computeLayout,
   OPEN_STRINGS, FINDER_QUALITIES, qualityDef, MOVABLE_SHAPES, OPEN,
@@ -3641,5 +3708,6 @@ export {
   parsePrefs, parseHub, parseDrill, parseRhythm, assertNever, unwrapOr, ok, err, prefsRepository, hubRepository,
   TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH,
   cellHeightFor,
+  pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo,
   effectiveBass, keyTitleOf, finderViewOf, stepIndex, progressionSeconds, practiceDeckOf, DEFAULT_HUB,
 }

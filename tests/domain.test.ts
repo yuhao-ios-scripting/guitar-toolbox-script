@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, cellHeightFor, computeLayout, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_NAME_ZH, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -348,5 +348,48 @@ describe("設計系統：無障礙文字與觸控目標", () => {
   it("觸控目標最小 44pt，指板格高在各寬度都不低於它", () => {
     expect(TOUCH_MIN).toBe(44)
     ;[undefined, 240, 390, 560, 800].forEach((w) => expect(cellHeightFor(w)).toBeGreaterThanOrEqual(TOUCH_MIN))
+  })
+})
+
+describe("在地化：語言判斷與字串表", () => {
+  const cases: [string, Parameters<typeof pickLang>[0], string][] = [
+    ["實機繁體：tag zh_TW、code zh", { tag: "zh_TW", code: "zh" }, "zh-TW"],
+    ["BCP 47 繁體", { tag: "zh-Hant-TW" }, "zh-TW"],
+    ["香港", { tag: "zh-HK" }, "zh-TW"],
+    ["只有 zh（無地區）視為繁體", { tag: "zh", code: "zh" }, "zh-TW"],
+    ["簡體：zh-Hans-CN", { tag: "zh-Hans-CN" }, "en"],
+    ["簡體：zh_CN", { tag: "zh_CN", code: "zh" }, "en"],
+    ["新加坡", { tag: "zh-SG" }, "en"],
+    ["以 script 欄位判斷簡體", { code: "zh", script: "Hans" }, "en"],
+    ["英文", { tag: "en-US", code: "en" }, "en"],
+    ["日文", { tag: "ja_JP", code: "ja" }, "en"],
+    ["沒有任何資訊", {}, "en"],
+  ]
+  cases.forEach(([name, info, expected]) => it(`pickLang：${name} → ${expected}`, () => {
+    expect(pickLang(info)).toBe(expected)
+  }))
+
+  it("兩種語言的鍵一致、內容非空、佔位符相同", () => {
+    const zh = CATALOG["zh-TW"] as Record<string, string>
+    const en = CATALOG.en as Record<string, string>
+    expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort())
+    const holders = (x: string) => (x.match(/\{\w+\}/g) ?? []).sort().join()
+    Object.keys(zh).forEach((k) => {
+      expect(zh[k].trim(), k).not.toBe("")
+      expect(en[k].trim(), k).not.toBe("")
+      expect(holders(en[k]), k).toBe(holders(zh[k]))
+    })
+  })
+  it("formatMessage：取代佔位符，缺參數時保留", () => {
+    expect(formatMessage("第 {n} 格 {name}", { n: 3, name: "C" })).toBe("第 3 格 C")
+    expect(formatMessage("第 {n} 格", {})).toBe("第 {n} 格")
+    expect(formatMessage("沒有佔位符")).toBe("沒有佔位符")
+  })
+  it("translatorFor：依語言取字串", () => {
+    expect(translatorFor("zh-TW")("tab.chords")).toBe("和弦")
+    expect(translatorFor("en")("tab.chords")).toBe("Chords")
+  })
+  it("readLocaleInfo 讀取 Device（測試替身為繁體）並判為 zh-TW", () => {
+    expect(pickLang(readLocaleInfo())).toBe("zh-TW")
   })
 })

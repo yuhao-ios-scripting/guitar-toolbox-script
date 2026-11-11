@@ -36,6 +36,13 @@ declare module "scripting" {
     present(options: { readonly element: JSX.Element }): Promise<void>
   }
   export const Script: { exit(): void }
+  // 欄位依官方「Device」頁的 Locale and Language 一節；皆為唯讀
+  export const Device: {
+    readonly systemLanguageTag?: string
+    readonly systemLanguageCode?: string
+    readonly systemCountryCode?: string
+    readonly systemScriptCode?: string
+  }
 
   export function useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void
   export function useMemo<T>(factory: () => T, deps: readonly unknown[]): T

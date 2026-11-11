@@ -556,3 +556,28 @@
 
 # → 提問 / A-025
 
++ godev 採用建議，先做字串表骨架。01:41:38 zh_TW zh undefined
+
+# → 回覆 / A-025
+
+* _2026-11-12 +0800_
+
+1. `godev 採用建議，先做字串表骨架。01:41:38 zh_TW zh undefined`
+
+   你的實機輸出解讀為：`systemLanguageTag = "zh_TW"`（底線格式）、`systemLanguageCode = "zh"`、`preferredLanguages = undefined`（此環境不提供）。因此語言判斷只用 tag／code／country／script，且同時接受底線與連字號。
+
+   已完成（0.4.0）：
+   - 字串表骨架：`MESSAGES_ZH_TW` 為鍵的來源，`MESSAGES_EN` 型別為 `Messages`（缺鍵無法編譯）；`translatorFor(lang)` 回傳 `t(key, params)`，`formatMessage` 處理 `{name}` 佔位符。
+   - 語言規則（採用建議預設）：繁體中文（含無地區的 `zh`）用 `zh-TW`；簡體中文（Hans、CN、SG）與其他語言用英文。純函式 `pickLang`，系統資訊由 infra 的 `readLocaleInfo` 讀取（失敗則視為英文）。
+   - 已接上六個字串：三個分頁標題與設定頁的標題、還原、完成；`PrefsSheet` 以 `t` prop 取用。`types/scripting.d.ts` 補上官方文件載明的 `Device` 欄位。
+   - `npm run typecheck` 零錯誤，`npm test` 543 個案例通過（含實機值、簡繁、各語言與鍵一致性）。`docs/design-system.md` §7 與 backlog B-006 已更新。繁體中文系統的畫面應與先前完全相同；請在實機確認，並可把系統語言改為英文確認這六個字串變成英文。尚未推送。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-025-1：下一步遷移「設定」頁其餘文案（約 40 個字串）並補英文？樂理與吉他術語的英文對照（例如封閉和弦＝barre chord、把位＝scale position）需要先補進 AGENTS.md 術語表。建議預設：是，先補術語表英文欄，再遷移設定頁。
+  - ans:
+
+---
+
+# → 提問 / A-026
+
