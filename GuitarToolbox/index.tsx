@@ -26,7 +26,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4] // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.0.3"
+const APP_VERSION = "0.1.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -531,17 +531,42 @@ const OPEN: Record<string, string> = {
   "4-add9": "022102", "7-add9": "320203", "11-m7": "x20202",
 }
 
-const E_SHAPE: Record<string, number[]> = {
-  maj: [0, 2, 2, 1, 0, 0], min: [0, 2, 2, 0, 0, 0], "7": [0, 2, 0, 1, 0, 0],
-  maj7: [0, 2, 1, 1, 0, 0], m7: [0, 2, 0, 0, 0, 0], sus4: [0, 2, 2, 2, 0, 0],
+/* 可移動指型（CAGED 與常見變化）：以「6→1 弦相對於橫按格的格數」表示，-1＝悶音。
+ * 同一類型可有多個按法（第一個為主要按法，其餘標示「變化」）。
+ * rootString／rootOffset：根音所在的弦（0＝6 弦）與該弦相對橫按格的格數，用來推算橫按位置。 */
+type MovableShape = {
+  readonly name: string
+  readonly rootString: number
+  readonly rootOffset: number
+  readonly forms: Record<string, readonly (readonly number[])[]>
 }
-const A_SHAPE: Record<string, number[]> = {
-  maj: [-1, 0, 2, 2, 2, 0], min: [-1, 0, 2, 2, 1, 0], "7": [-1, 0, 2, 0, 2, 0],
-  maj7: [-1, 0, 2, 1, 2, 0], m7: [-1, 0, 2, 0, 1, 0], sus2: [-1, 0, 2, 2, 0, 0],
-  sus4: [-1, 0, 2, 2, 3, 0], add9: [-1, 0, 2, 4, 2, 0], dim: [-1, 0, 1, 2, 1, -1],
-  aug: [-1, 0, 3, 2, 2, 1],
-  m7b5: [-1, 0, 1, 0, 1, -1],
-}
+const MOVABLE_SHAPES: readonly MovableShape[] = [
+  { name: "E", rootString: 0, rootOffset: 0, forms: {
+    maj: [[0, 2, 2, 1, 0, 0]], min: [[0, 2, 2, 0, 0, 0]],
+    "7": [[0, 2, 0, 1, 0, 0], [0, 2, 2, 1, 3, 0]],
+    maj7: [[0, 2, 1, 1, 0, 0]], m7: [[0, 2, 0, 0, 0, 0], [0, 2, 2, 0, 3, 0]],
+    sus4: [[0, 2, 2, 2, 0, 0]], sus2: [[0, 2, 4, 4, 0, 0]], aug: [[0, 3, 2, 1, 1, 0]],
+  } },
+  { name: "A", rootString: 1, rootOffset: 0, forms: {
+    maj: [[-1, 0, 2, 2, 2, 0]], min: [[-1, 0, 2, 2, 1, 0]],
+    "7": [[-1, 0, 2, 0, 2, 0], [-1, 0, 2, 2, 2, 3]],
+    maj7: [[-1, 0, 2, 1, 2, 0]], m7: [[-1, 0, 2, 0, 1, 0], [-1, 0, 2, 2, 1, 3]],
+    sus2: [[-1, 0, 2, 2, 0, 0]], sus4: [[-1, 0, 2, 2, 3, 0]], add9: [[-1, 0, 2, 4, 2, 0]],
+    dim: [[-1, 0, 1, 2, 1, -1]], aug: [[-1, 0, 3, 2, 2, 1]], m7b5: [[-1, 0, 1, 0, 1, -1]],
+  } },
+  { name: "D", rootString: 2, rootOffset: 0, forms: {
+    maj: [[-1, -1, 0, 2, 3, 2]], min: [[-1, -1, 0, 2, 3, 1]],
+    "7": [[-1, -1, 0, 2, 1, 2]], maj7: [[-1, -1, 0, 2, 2, 2]], m7: [[-1, -1, 0, 2, 1, 1]],
+    sus2: [[-1, -1, 0, 2, 3, 0]], sus4: [[-1, -1, 0, 2, 3, 3]],
+    dim: [[-1, -1, 0, 1, 3, 1]], aug: [[-1, -1, 0, 3, 3, 2]], m7b5: [[-1, -1, 0, 1, 1, 1]],
+  } },
+  { name: "C", rootString: 1, rootOffset: 3, forms: {
+    maj: [[-1, 3, 2, 0, 1, 0]], "7": [[-1, 3, 2, 3, 1, 0]], maj7: [[-1, 3, 2, 0, 0, 0]],
+  } },
+  { name: "G", rootString: 0, rootOffset: 3, forms: {
+    maj: [[3, 2, 0, 0, 0, 3]], "7": [[3, 2, 0, 0, 0, 1]],
+  } },
+]
 
 type VoicingKind = "open" | "barre"
 type FinderVoicing = { title: string; kind: VoicingKind; frets: Fret[] } // null 不彈，0 空弦
@@ -563,18 +588,17 @@ function buildVoicings(root: number, q: string): FinderVoicing[] {
   const open = OPEN[`${root}-${q}`]
   if (open) add("開放和弦", "open", parseOpen(open))
 
-  const e = E_SHAPE[q]
-  if (e) {
-    const f = (root - 4 + 12) % 12
-    add(f === 0 ? "E 型" : `E 型封閉（第 ${f} 格）`, f === 0 ? "open" : "barre",
-      e.map(o => (o < 0 ? null : o + f)))
-  }
-  const a = A_SHAPE[q]
-  if (a) {
-    const f = (root - 9 + 12) % 12
-    add(f === 0 ? "A 型" : `A 型封閉（第 ${f} 格）`, f === 0 ? "open" : "barre",
-      a.map(o => (o < 0 ? null : o + f)))
-  }
+  MOVABLE_SHAPES.forEach((shape) => {
+    const forms = shape.forms[q]
+    if (!forms) return
+    const f = mod12(root - OPEN_STRINGS[shape.rootString] - shape.rootOffset)
+    forms.forEach((offsets, i) => {
+      const label = i === 0 ? "" : "・變化"
+      add(f === 0 ? `${shape.name} 型${label}` : `${shape.name} 型封閉（第 ${f} 格）${label}`,
+        f === 0 ? "open" : "barre",
+        offsets.map((o) => (o < 0 ? null : o + f)))
+    })
+  })
   return list
 }
 
