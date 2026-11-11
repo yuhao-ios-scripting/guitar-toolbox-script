@@ -26,7 +26,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4] // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.2.0"
+const APP_VERSION = "0.2.1"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -3306,3 +3306,11 @@ async function run() {
   Script.exit()
 }
 run()
+
+// 僅供單元測試匯入的純領域函式（Scripting 執行時忽略匯出）。
+export {
+  mod12, noteName, prefersFlats, shuffled, nextRandom, computeLayout,
+  OPEN_STRINGS, FINDER_QUALITIES, qualityDef, MOVABLE_SHAPES, OPEN,
+  getVoicings, getSlashVoicings, voicingsInScope, resolveFingering,
+  diatonicChords, resolveProgression, MAJOR_PROGS,
+}

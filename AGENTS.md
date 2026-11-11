@@ -54,7 +54,7 @@ scripts/src/
 
 - 要發佈的腳本放在 `GuitarToolbox/`（含 `script.json` 與進入點 `index.tsx`，符合 Scripting 文件）；型別外殼、`package.json`、`tsconfig.json` 與 `.agentflow/` 留在根目錄，不會被匯入。型別檢查：`npm install` 後執行 `npm run typecheck`（TypeScript 7，`strict`）。提交前必須通過。
 - Scripting 未公開 npm 型別套件，因此 `types/scripting.d.ts` 是**最小型別外殼**：畫面元件的 props 一律放寬為 `any`，**不會被檢查**；Domain／Application／Infrastructure 的型別則完全有效。`GuitarToolbox/index.tsx` 新用到 `scripting` 的名稱或全域 API 時，須同步補在此檔，並以官方文件為準，不得憑空宣告。
-- 專案尚無單元測試與建置腳本；新增前請先與擁有者確認工具鏈。
+- 單元測試：Vitest（`npm test`），測試放在 `tests/`。`scripting` 以 `tests/scripting-stub.ts` 替身載入；`GuitarToolbox/index.tsx` 檔尾的 `export { … }` 區塊只供測試匯入，新增要測的純函式時一併加入。尚無建置腳本；新增前請先與擁有者確認工具鏈。
 
 ### 2.1 Bounded Context（限界上下文）
 

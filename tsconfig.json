@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["GuitarToolbox/index.tsx", "types/**/*.d.ts"]
+  "include": ["GuitarToolbox/index.tsx", "types/**/*.d.ts", "tests/**/*.ts", "vitest.config.ts"]
 }

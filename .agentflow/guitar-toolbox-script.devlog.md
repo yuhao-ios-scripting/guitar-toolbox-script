@@ -379,3 +379,22 @@
 
 # → 提問 / A-018
 
++ godev 採用建議，先建立測試工具鏈
+
+# → 回覆 / A-018
+
+* _2026-11-12 +0800_
+
+1. `godev 採用建議，先建立測試工具鏈`
+
+   已建立 Vitest 5.1.0（`npm test`）：`vitest.config.ts` 將 `scripting` 指到 `tests/scripting-stub.ts`，`tests/setup.ts` 提供 `Storage` 等全域替身；`GuitarToolbox/index.tsx` 檔尾新增僅供測試的 `export { … }`（未拆檔，Scripting 執行時忽略）。`tests/domain.test.ts` 共 484 個表格化案例：音高與同音異名、Cmaj7／G7／Am7♭5 組成、C 大調順階和弦、12 根音 × 11 類型的每個按法（只含和弦音、最低音為根音、至多缺一音、最高格 ≤ 15）、開放和弦表、F 大三和弦 E 型 `1 3 3 2 1 1`、指型篩選、斜線和弦最低音、指法推算、和弦進行、`shuffled` 純度、`computeLayout`。全部通過，`npm run typecheck`（現含 tests）零錯誤。測試未發現資料錯誤。AGENTS.md 2.4 與 README 已更新；版本升為 0.2.1（內部變更，四處同步）。尚未推送，也未做 property-based 與移調夾測試（領域尚無對應函式）。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-018-1：是否接著做 B-001／B-002（branded type 與文案移出 domain）？建議預設：是，先做 B-002，再做 B-001。
+  - ans:
+
+---
+
+# → 提問 / A-019
+
