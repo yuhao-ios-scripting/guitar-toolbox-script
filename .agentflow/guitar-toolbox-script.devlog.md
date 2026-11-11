@@ -470,3 +470,28 @@
 
 # → 提問 / A-022
 
++ godev 採用建議，先 B-004 再 B-005
+
+# → 回覆 / A-022
+
+* _2026-11-12 +0800_
+
+1. `godev 採用建議，先 B-004 再 B-005`
+
+   B-004：新增 `Result<E, A>`（`ok`、`err`、`unwrapOr`）、`isRecord` 與 `assertNever`。偏好、和弦、練習、節奏四種設定的驗證從儲存庫抽成純函式 `parsePrefs`、`parseHub`、`parseDrill`、`parseRhythm`（輸入 `unknown`，回傳 `Result`；舊版資料遷移邏輯不變，且改為不 mutate）；儲存庫只剩讀寫與 `unwrapOr` 回退預設值。3 個 `switch`（`practiceReducer`、認音練習 reducer、`strokeVelocity`）都加上 `default: assertNever`。未新增 `Option`：目前沒有需要它的地方，避免無用程式碼。
+
+   B-005：移除模組載入時的四個 `load()`，改為元件內 `useMemo` 讀取初始值；模組層 `rhythmTicket` 改為節奏頁元件內的可變容器（Scripting 沒有 `useRef`，以 `useMemo` 保存）。`synth` 單例（播放器與快取）仍是模組層狀態，它本身就是 Infrastructure 的副作用邊界，未動。
+
+   `npm run typecheck` 零錯誤，`npm test` 507 個案例通過（新增解析與儲存庫測試）。版本升為 0.2.6，尚未推送。請實機確認：關閉再開啟 app 後各頁設定仍會還原（偏好、和弦、節奏、認音最佳連對），以及節奏頁切換分頁時播放會停止。
+
+   B-004、B-005 完成，已從 backlog 移除；backlog 只剩 B-001（`Fret` branded type）。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-022-1：要處理 B-001 的 `Fret` branded type 嗎？建議預設：不做，改動面大而收益低，維持 backlog。
+  - ans:
+
+---
+
+# → 提問 / A-023
+

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { QualityKey } from "../GuitarToolbox/index"
 import {
-  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, computeLayout, DEFAULT_HUB, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
+  FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, computeLayout, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSections, rhythmPlaySection, rhythmProgSection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
   resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_TEXT, voicingsInScope,
 } from "../GuitarToolbox/index"
@@ -242,5 +242,67 @@ describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量�
       shown: progChords[0], shownFrets: [], nm: noteName(false), gridHint: "", gridLegend: "", tapStroke: noop,
     })
     expect(grid).toHaveLength(2)
+  })
+})
+
+describe("Result 與 assertNever", () => {
+  it("unwrapOr：成功取值、失敗用預設", () => {
+    expect(unwrapOr(ok(1), 0)).toBe(1)
+    expect(unwrapOr(err("x"), 0)).toBe(0)
+  })
+  it("assertNever 在不可能的情況丟出例外", () => {
+    expect(() => assertNever("oops" as never)).toThrow()
+  })
+})
+
+describe("設定的解析", () => {
+  it("沒有資料或格式不對時為失敗，由呼叫端用預設值", () => {
+    ;[null, undefined, 3, "x", []].forEach((raw) => {
+      expect(parsePrefs(raw).ok).toBe(false)
+      expect(parseRhythm(raw).ok).toBe(false)
+    })
+    expect(parseHub(null, null).ok).toBe(false)
+    expect(parseDrill(null, []).ok).toBe(false)
+  })
+  it("偏好：預設值經解析後不變", () => {
+    expect(unwrapOr(parsePrefs({ ...DEFAULT_PREFS }), null)).toEqual(DEFAULT_PREFS)
+  })
+  it("偏好：舊版兩個開關推算 boardLabel 與側邊音名", () => {
+    const legacy = (flags: object) => {
+      const { boardLabel: _b, showSideNames: _s, ...rest } = DEFAULT_PREFS
+      return unwrapOr(parsePrefs({ ...rest, ...flags }), DEFAULT_PREFS)
+    }
+    expect(legacy({ showFingers: false, showNoteNames: false })).toMatchObject({ boardLabel: "none", showSideNames: false })
+    expect(legacy({ showFingers: false, showNoteNames: true })).toMatchObject({ boardLabel: "name", showSideNames: true })
+    expect(legacy({ showFingers: true })).toMatchObject({ boardLabel: "finger" })
+  })
+  it("偏好：barreShapes 缺少時用預設，含未知名稱時過濾", () => {
+    const { barreShapes: _drop, ...rest } = DEFAULT_PREFS
+    expect(unwrapOr(parsePrefs(rest), DEFAULT_PREFS).barreShapes).toEqual(["E", "A", "D"])
+    expect(unwrapOr(parsePrefs({ ...DEFAULT_PREFS, barreShapes: ["G", "X", "E"] }), DEFAULT_PREFS).barreShapes)
+      .toEqual(["E", "G"])
+  })
+  it("和弦設定：非法值被修正，舊版資料可沿用", () => {
+    const bad = unwrapOr(parseHub({ finderQuality: "zzz", finderBass: 99, tonic: 14, scope: "x", degrees: [0, 9] }, null), DEFAULT_HUB)
+    expect(bad).toMatchObject({ finderQuality: "maj", finderBass: -1, tonic: 2, scope: "open", degrees: [0] })
+    expect(parseHub(null, { tonic: 7 }).ok).toBe(true)
+  })
+  it("練習紀錄：沿用舊 key 的最佳連對", () => {
+    expect(unwrapOr(parseDrill(null, [null, { best: 12 }]), { best: 0 })).toEqual({ best: 12 })
+    expect(unwrapOr(parseDrill({ best: "x" }, []), { best: -1 })).toEqual({ best: 0 })
+  })
+  it("節奏設定：不合法的值回到預設，bpm 被限制在範圍內", () => {
+    const r = unwrapOr(parseRhythm({ beats: 7, bpm: 9999, strumPattern: "??", pickKey: "nope", repeats: 99 }), DEFAULT_RHYTHM)
+    expect(r.beats).toBe(4)
+    expect(r.bpm).toBeLessThan(9999)
+    expect(r.strumPattern).toHaveLength(8)
+    expect(r.repeats).toBe(DEFAULT_RHYTHM.repeats)
+  })
+  it("儲存庫：讀不到資料時回傳預設，存了之後讀得回來", () => {
+    expect(prefsRepository.load()).toEqual(DEFAULT_PREFS)
+    prefsRepository.save({ ...DEFAULT_PREFS, haptics: false })
+    expect(prefsRepository.load().haptics).toBe(false)
+    hubRepository.save({ ...DEFAULT_HUB, bpm: 120 })
+    expect(hubRepository.load().bpm).toBe(120)
   })
 })
