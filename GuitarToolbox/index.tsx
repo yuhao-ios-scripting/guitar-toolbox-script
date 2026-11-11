@@ -30,7 +30,7 @@ const ALL_PCS: readonly PitchClass[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].ma
 const OPEN_STRINGS: readonly PitchClass[] = [4, 9, 2, 7, 11, 4].map((n) => mod12(n)) // 6→1 弦：E A D G B E
 const STRING_COUNT = 6
 
-const APP_VERSION = "0.9.0"
+const APP_VERSION = "0.10.0"
 
 // 版面判斷：由視窗短邊決定（iPhone 最大約 440pt、iPad mini 全螢幕為 744pt）
 const PAD_MIN_SHORT_SIDE = 600 // 視窗短邊 ≥ 600pt 採用 iPad 版面
@@ -1337,6 +1337,27 @@ const resolveProgression = (
   })
 }
 
+// 五度圈：12 個音級順時針每次上行完全五度（C G D …），頂端為 C；
+// 角色依所在調與目前進行決定，進行中的和弦記下第幾個（同一和弦可出現多次）
+type CircleRole = "tonic" | "progression" | "diatonic" | "outside"
+interface CircleNode {
+  readonly pc: PitchClass
+  readonly angle: number // 度，由頂端順時針
+  readonly role: CircleRole
+  readonly steps: readonly number[] // 在進行中的順序（從 1 起）
+}
+const circleOfFifths = (key: Key, chords: readonly ProgChord[]): CircleNode[] => {
+  const diatonicRoots = new Set<number>(diatonicChords(key).map((c) => c.root))
+  return Array.from({ length: 12 }, (_, i) => {
+    const pc = mod12(i * 7)
+    const steps = chords.flatMap((c, k) => (c.root === pc ? [k + 1] : []))
+    const role: CircleRole = pc === key.tonic ? "tonic"
+      : steps.length > 0 ? "progression"
+        : diatonicRoots.has(pc) ? "diatonic" : "outside"
+    return { pc, angle: i * 30, role, steps }
+  })
+}
+
 // 題庫來源 B：目前的和弦進行（相同和弦只算一次）
 const practiceChordsOfProgression = (chords: readonly ProgChord[]): PracticeChord[] => {
   const seen = new Set<string>()
@@ -1588,6 +1609,51 @@ interface ProgressionCtx {
   readonly playAll: () => void
   readonly openInFinder: (root: PitchClass, quality: QualityKey) => void
 }
+// 五度圈圖示：主音為橘色、進行中的和弦為主色並標出順序、其餘順階音淺灰、調外音更淡
+const CIRCLE_SIZE = 280
+const CIRCLE_NODE = TOUCH_MIN
+function CircleOfFifths(props: {
+  nodes: readonly CircleNode[]
+  flats: boolean
+  keyTitle: string
+  pal: Palette
+  t: Translate
+}) {
+  const { nodes, flats, keyTitle, pal, t } = props
+  const nm = noteName(flats)
+  const radius = (CIRCLE_SIZE - CIRCLE_NODE) / 2
+  const fillOf = (r: CircleRole): string =>
+    r === "tonic" ? pal.root : r === "progression" ? pal.dot : r === "diatonic" ? "systemGray4" : "systemGray6"
+  const inkOf = (r: CircleRole): string =>
+    r === "tonic" || r === "progression" ? inkOn(fillOf(r)) : r === "diatonic" ? "label" : "secondaryLabel"
+  const roleText = (n: CircleNode): string =>
+    n.role === "tonic" ? t("circle.role.tonic")
+      : n.role === "progression" ? t("circle.role.progression")
+        : n.role === "diatonic" ? t("circle.role.diatonic") : t("circle.role.outside")
+  const describe = nodes.map((n) => `${nm(n.pc)} ${roleText(n)}`).join(", ")
+  return (
+    <ZStack frame={{ width: CIRCLE_SIZE, height: CIRCLE_SIZE }} dynamicTypeSize={BOARD_TYPE_SIZE}
+      accessibilityElement="ignore" accessibilityLabel={t("circle.a11y", { key: keyTitle, nodes: describe })}>
+      <Text font="footnote" foregroundStyle="secondaryLabel">{keyTitle}</Text>
+      {nodes.map((n) => {
+        const rad = (n.angle * Math.PI) / 180
+        return (
+          <ZStack key={n.pc} frame={{ width: CIRCLE_NODE, height: CIRCLE_NODE }}
+            offset={{ x: Math.sin(rad) * radius, y: -Math.cos(rad) * radius }}>
+            <Circle fill={fillOf(n.role)} frame={{ width: CIRCLE_NODE, height: CIRCLE_NODE }} />
+            <VStack spacing={0}>
+              <Text font="subheadline" fontWeight="bold" foregroundStyle={inkOf(n.role)}>{nm(n.pc)}</Text>
+              {n.steps.length > 0
+                ? <Text font="caption2" foregroundStyle={inkOf(n.role)}>{n.steps.join("·")}</Text>
+                : null}
+            </VStack>
+          </ZStack>
+        )
+      })}
+    </ZStack>
+  )
+}
+
 // 進行：左欄選進行、和弦與播放，右欄顯示所選和弦的指法
 const progressionSections = (c: ProgressionCtx): Placed[] => {
   const {
@@ -1617,6 +1683,19 @@ const progressionSections = (c: ProgressionCtx): Placed[] => {
       </Section>,
     ),
   ]
+  out.push(
+    R(
+      <Section key="circle" header={<Text>{t("circle.header")}</Text>}
+        footer={<Text>{t("circle.footer")}</Text>}>
+        <HStack>
+          <Spacer />
+          <CircleOfFifths nodes={circleOfFifths({ tonic: s.tonic, mode: s.mode }, progChords)}
+            flats={keyFlats} keyTitle={keyTitle} pal={PALETTES[prefs.palette]} t={t} />
+          <Spacer />
+        </HStack>
+      </Section>,
+    ),
+  )
   if (prefs.soundOn) {
     out.push(
       L(
@@ -3457,6 +3536,13 @@ const MESSAGES_ZH_TW = {
   "prog.picker": "進行",
   "prog.list.footer": "點選和弦可查看指法並試聽；整段播放會依速度與拍數連續彈奏。",
   "prog.noVoicing": "（無指法）",
+  "circle.header": "五度圈",
+  "circle.footer": "順時針每格上行完全五度。橘色為主音，藍色為進行中的和弦（數字為出現順序），灰色為同調的其他順階音。",
+  "circle.role.tonic": "主音",
+  "circle.role.progression": "進行中的和弦",
+  "circle.role.diatonic": "順階音",
+  "circle.role.outside": "調外音",
+  "circle.a11y": "{key} 的五度圈，由 C 起順時針：{nodes}",
   "prog.play": "播放",
   "prog.play.footer": "約 {seconds} 秒。播放方式（同時／刷弦／琶音）可在設定中調整。",
   "prog.tempo": "速度",
@@ -3736,6 +3822,13 @@ const MESSAGES_EN: Messages = {
   "prog.picker": "Progression",
   "prog.list.footer": "Tap a chord to see its voicing and hear it. Play Progression plays the whole sequence at the chosen tempo and beats.",
   "prog.noVoicing": " (no voicing)",
+  "circle.header": "Circle of Fifths",
+  "circle.footer": "Each step clockwise is a perfect 5th up. Orange is the tonic, the main color marks chords in the progression (numbers show their order), and gray marks the other notes of the key.",
+  "circle.role.tonic": "tonic",
+  "circle.role.progression": "in the progression",
+  "circle.role.diatonic": "in the key",
+  "circle.role.outside": "outside the key",
+  "circle.a11y": "Circle of fifths for {key}, clockwise from C: {nodes}",
   "prog.play": "Playback",
   "prog.play.footer": "About {seconds} seconds. You can change the playback style (together / strum / arpeggio) in Settings.",
   "prog.tempo": "Tempo",
@@ -4296,7 +4389,7 @@ export {
   finderSections, progressionSections, practiceSections, rhythmTypeSection, rhythmPlaySection,
   rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, practiceChordsOfProgression,
   parsePrefs, parseHub, parseDrill, parseRhythm, assertNever, unwrapOr, ok, err, prefsRepository, hubRepository,
-  TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE,
+  circleOfFifths, TOUCH_MIN, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE,
   synth, RhythmStudio, SCALES, promptOf, expectedOf, expectedText, rangeLabel, cellHeightFor, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav,
   STRUM_TEMPLATES, PICK_TEMPLATES, parseStrum, hintForNotation, notationLegend,
   pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, PALETTE_MESSAGE,

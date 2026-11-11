@@ -4,7 +4,7 @@ import type { QualityKey } from "../GuitarToolbox/index"
 import {
   FINDER_QUALITIES, MAJOR_PROGS, MOVABLE_SHAPES, OPEN, OPEN_STRINGS, assertNever, synth, RhythmStudio, SCALES, promptOf, expectedOf, expectedText, rangeLabel, cellHeightFor, computeLayout, PALETTE_MESSAGE, TOUCH_MIN, pickLang, translatorFor, formatMessage, CATALOG, readLocaleInfo, SYSTEM_FILLS, PALETTES, contrastRatio, hexToRgb, inkOn, describePosition, describeVoicing, STROKE_MESSAGE, barsOptionOf, planEvents, planPassSeconds, playheadAt, runSeconds, renderWav, STRUM_TEMPLATES, PICK_TEMPLATES, parseStrum, hintForNotation, notationLegend, DEFAULT_HUB, err, ok, parseDrill, parseHub, parsePrefs, parseRhythm, prefsRepository, hubRepository, unwrapOr, DEFAULT_PREFS, DEFAULT_RHYTHM, buildDeck, finderSections, practiceSections, progressionSections, rhythmGridSection, rhythmChordSections, rhythmVoicingsOf, chosenIndexOf, chordNaming, rhythmPlaySection, rhythmTypeSection, diatonicChords, effectiveBass, finderViewOf, keyTitleOf, practiceDeckOf, progressionSeconds, stepIndex, isQualityKey, QUALITY_KEYS,
   getSlashVoicings, getVoicings, mod12, noteName, prefersFlats, qualityDef, resolveFingering,
-  resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_MESSAGE, QUALITY_FORMULA, voicingsInScope,
+  circleOfFifths, resolveProgression, shuffled, voicingTitle, qualityLabel, QUALITY_MESSAGE, QUALITY_FORMULA, voicingsInScope,
 } from "../GuitarToolbox/index"
 
 const tz = translatorFor("zh-TW")
@@ -215,13 +215,13 @@ describe("畫面區塊函式（冒煙測試：不丟例外、回傳預期數量�
     })
     expect(out.map((p) => p.pane)).toEqual(["left", "right"])
   })
-  it("progressionSections：有聲音時三個左欄＋一個右欄", () => {
+  it("progressionSections：有聲音時三個左欄＋五度圈與指法兩個右欄", () => {
     const out = progressionSections({
       s: hub, prefs, bw: 320, t: tz, keyTitle: "C 大調", keyFlats: false, progs, progIdx: 0, prog, progChords,
       progSummary: "x", seconds: 12, selIdx: 0, sel: progChords[0], patch: noop, setSelected: noop,
       choose: noop, playAll: noop, openInFinder: noop,
     })
-    expect(out.map((p) => p.pane)).toEqual(["left", "left", "left", "right"])
+    expect(out.map((p) => p.pane)).toEqual(["left", "left", "right", "left", "right"])
   })
   it("practiceSections：題庫來源為調內級數時有四個區塊", () => {
     const deck = buildDeck(key, "open", prefs.barreShapes, hub.degrees, hub.qualities)
@@ -586,5 +586,34 @@ describe("播放同步：游標以聲音真正開始的時刻為起點", () => {
     await synth.playEvents(events)
     expect(players[players.length - 1].numberOfLoops).toBe(0)
     synth.stop()
+  })
+})
+
+describe("五度圈 circleOfFifths", () => {
+  const key = { tonic: mod12(0), mode: "major" } as const
+  const chords = resolveProgression(key, MAJOR_PROGS[0], "open", false, ["E", "A", "D"]) // I–V–vi–IV
+  const nodes = circleOfFifths(key, chords)
+  const at = (n: number) => nodes.find((x) => x.pc === n)!
+
+  it("頂端為 C，順時針每格上行完全五度", () => {
+    expect(nodes.map((n) => noteName(false)(n.pc))).toEqual(
+      ["C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#", "F"])
+    expect(nodes.map((n) => n.angle)).toEqual([0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330])
+  })
+  it("角色：主音、進行中、順階、調外", () => {
+    expect(at(0).role).toBe("tonic")
+    expect([at(7).role, at(9).role, at(5).role]).toEqual(["progression", "progression", "progression"])
+    expect(at(2).role).toBe("diatonic") // ii 不在 I–V–vi–IV 內
+    expect(at(1).role).toBe("outside")
+  })
+  it("記下和弦在進行中的順序，主音與重複出現也計入", () => {
+    expect(at(0).steps).toEqual([1])
+    expect([at(7).steps, at(9).steps, at(5).steps]).toEqual([[2], [3], [4]])
+    const twice = circleOfFifths(key, resolveProgression(key, MAJOR_PROGS[1], "open", false, ["E", "A", "D"])) // I–IV–V–I
+    expect(twice.find((n) => n.pc === 0)!.steps).toEqual([1, 4])
+  })
+  it("英文與中文字串都有五度圈用語", () => {
+    expect(te("circle.header")).toBe("Circle of Fifths")
+    expect(tz("circle.header")).toBe("五度圈")
   })
 })
