@@ -72,7 +72,8 @@
 
 - 預設繁體中文（`zh-TW`），樂理用語依 AGENTS.md 第 3 章對照表。
 - 領域層不放文案：和弦類型名稱在 `QUALITY_TEXT`、按法名稱在 `voicingTitle`、刷法名稱在 `STROKE_NAME_ZH`。
-- **尚未完成**：英文在地化與字串集中管理（見 backlog）。
+- **尚未完成**：英文在地化與字串集中管理（見 backlog B-006）。
+- **語系 API（依 Scripting 官方文件）**：可用 `Device.systemLanguageCode`（如 `"zh"`）、`Device.systemLanguageTag`（如 `"en-US"`）、`Device.systemCountryCode`、`Device.preferredLanguages`（如 `["en-US", "zh-Hans-CN"]`）、`Device.systemLocale`（底線格式 `"en_US"`）；日期用 `DateFormatter`。**文件未記載**：`Locale` 類別、`Intl`、`NumberFormatter`、`script.json` 的在地化欄位，也沒有任何「介面文字自動跟隨系統語言」的機制，因此字串表必須自己實作。文件的範例只有簡體 `zh-Hans-CN`，繁體（`zh-Hant`／`zh-TW`）的實際回傳值須在實機確認。
 
 ## 8. 檢查清單（新增或修改畫面時）
 

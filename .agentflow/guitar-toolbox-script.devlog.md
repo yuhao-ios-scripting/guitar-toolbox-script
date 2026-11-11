@@ -527,3 +527,32 @@
 
 # → 提問 / A-024
 
++ godev 採用建議，接受並先查語系 API
+
+# → 回覆 / A-024
+
+* _2026-11-12 +0800_
+
+1. `godev 採用建議，接受並先查語系 API`
+
+   藍、紅、紫底改黑字已包含在 0.3.0，視為接受。
+
+   語系 API 查詢結果（依 Scripting 官方文件，未改程式）：
+   - 有記載：`Device.systemLanguageCode`（如 `"en"`）、`Device.systemLanguageTag`（如 `"en-US"`）、`Device.systemCountryCode`、`Device.systemScriptCode`、`Device.preferredLanguages`（如 `["en-US", "zh-Hans-CN"]`）、`Device.systemLocale`（底線格式 `"en_US"`）；`DateFormatter`（可指定 `locale`）；`Translation`（文字翻譯，不是介面在地化）。
+   - 未記載：`Locale` 類別、`Intl`、`NumberFormatter`、`script.json` 的在地化欄位、介面文字自動跟隨系統語言的機制。
+   - 結論：app 必須自建字串表，並以 `Device.systemLanguageCode` 或 `systemLanguageTag` 選語言。文件範例只有簡體（`zh-Hans-CN`），繁體系統的實際回傳值未載明，須在實機確認後才能定規則。
+   - 已更新 `docs/design-system.md` §7 與 backlog B-006；因 app 行為不變，版本維持 0.3.0。
+
+## 問題（批次提出，各附建議預設值）
+
+- Q-024-1：是否開始做英文在地化？範圍大（數百個內嵌字串），建議分頁逐步遷移，每步可獨立驗證。建議預設：先做字串表骨架與語言判斷（含單元測試），再遷移「設定」頁，確認方式可行後逐頁推進。
+  - ans:
+- Q-024-2：語言規則——系統語言是繁體中文（`zh-Hant` 或 `zh-TW`）用繁體，其餘一律英文？簡體中文系統是否也用繁體？建議預設：僅繁體中文系統用 `zh-TW`，其餘（含簡體）用英文；規則可日後調整。
+  - ans:
+- Q-024-3：能否請你在實機的 Scripting 以 `console.log(Device.systemLanguageTag, Device.systemLanguageCode, Device.preferredLanguages)` 執行一次，回報繁體系統的實際值？建議預設：是，這是規則能否正確判斷的前提。
+  - ans:
+
+---
+
+# → 提問 / A-025
+
